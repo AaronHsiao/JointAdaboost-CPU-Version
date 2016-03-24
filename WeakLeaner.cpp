@@ -384,14 +384,6 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf1_sn, int nf1_sn, int f
 		nw[i] = 1.0 / (pf1_sn + nf1_sn);
 	}
 
-	for (int i = 0; i < pf1_sn; i++)
-	{
-		cout << pw[i] << ", ";
-	}
-
-	cout << "\n";
-	system("pause");
-
 	float wsum = 0;
 
 	for (int i = 0; i < pf1_sn; i++)
@@ -414,11 +406,30 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf1_sn, int nf1_sn, int f
 		nw[i] /= wsum;
 	}
 
-	float ret[2101][3];
+	//cout << "pwpwpwpwpwpwp,,,,";
+	//for (int i = 0; i < pf1_sn; i++)
+	//{
+	//	cout << pw[i] << ", ";
+	//}
+
+	//cout << "\n";
+	//system("pause");
+
+	//cout << "nwnwnw,,,,";
+	//for (int i = 0; i < nf1_sn; i++)
+	//{
+	//	cout << nw[i] << ", ";
+	//}
+
+	//cout << "\n\n";
+	//cout << "wsum: " << wsum;
+	//system("pause");
+
+	//float ret[2101][3];
 
 	//OpenCL, 多傳一個List進去吧
-	int pf_shape[2] = { fn, pf1_sn };
-	int nf_shape[2] = { fn, nf1_sn };
+	//int pf_shape[2] = { fn, pf1_sn };
+	//int nf_shape[2] = { fn, nf1_sn };
 
 	//compute.set_buffer((float *)pf, fn * pf1_sn*sizeof(float));
 	//compute.set_buffer((float *)nf, fn * nf1_sn*sizeof(float));
@@ -434,11 +445,12 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf1_sn, int nf1_sn, int f
 	//compute.set_ret_buffer((float *)ret, fn * 3 * sizeof(float));
 
 
-
+	//做times次的WeakLeaner
 	for (int i = 0; i < times; i++)
 	{
-		float wsum = 0;
+		wsum = 0;
 
+		//調整權重
 		for (int i = 0; i < pf1_sn; i++)
 		{
 			wsum = wsum + pw[i];
@@ -456,6 +468,28 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf1_sn, int nf1_sn, int f
 		{
 			nw[i] /= wsum;
 		}
+
+
+		//cout << "pwpwpwpwpwpwp,,,,";
+		//for (int i = 0; i < pf1_sn; i++)
+		//{
+		//	cout << pw[i] << ", ";
+		//}
+
+		//cout << "\n";
+		//system("pause");
+
+		//cout << "nwnwnw,,,,";
+		//for (int i = 0; i < nf1_sn; i++)
+		//{
+		//	cout << nw[i] << ", ";
+		//}
+
+		//cout << "\n\n";
+		//cout << "wsum: " << wsum;
+		//system("pause");
+
+
 
 
 
@@ -483,6 +517,10 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf1_sn, int nf1_sn, int f
 				selectif = k;
 			}
 		}
+
+		cout << pw[0] * 4 << "\n";
+		cout << "output: " <<output[0];
+		system("pause");
 
 		//Rebuild the error map, given k we know features
 
@@ -585,6 +623,29 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf1_sn, int nf1_sn, int f
 			}
 		}
 
+
+		//cout << "pwpwpwpwpwpwp,,,,";
+		//for (int i = 0; i < pf1_sn; i++)
+		//{
+		//	cout << pw[i] << ", ";
+		//}
+
+		//cout << "\n";
+		//system("pause");
+
+		//cout << "nwnwnw,,,,";
+		//for (int i = 0; i < nf1_sn; i++)
+		//{
+		//	cout << nw[i] << ", ";
+		//}
+
+		//cout << "\n\n";
+		//cout << "wsum: " << wsum;
+		//system("pause");
+
+
+
+
 		//printf("i=%d\n", i);
 
 		//F[i][0] = selectif;
@@ -599,10 +660,10 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf1_sn, int nf1_sn, int f
 		printf("[%d+%d] , %f, %f\n", list[i][0], list[i][1], selectif + 1, log(1 / beta));
 		for (int q = 0; q < 4; q++)
 		{
-			cout << PorN(seatTable[q][0])
-				<< "|" << PorN(seatTable[q][1])
-				<< "|" << PorN(seatTable[q][2])
-				<< "|" << PorN(seatTable[q][3]) << "\n";
+			//cout << PorN(seatTable[q][0])
+			//	<< "|" << PorN(seatTable[q][1])
+			//	<< "|" << PorN(seatTable[q][2])
+			//	<< "|" << PorN(seatTable[q][3]) << "\n";
 		}
 		
 
@@ -676,6 +737,26 @@ void WeakLearn(float pf1[][15], float nf1[][14],
 	float pw[], float nw[], 
 	int pf1_sn, int nf1_sn, int fn, int list[][2], float* return_Matrix, float** q_Map)
 {
+
+	//cout << "pwpwpwpwpwpwp,,,,";
+	//for (int i = 0; i < pf1_sn; i++)
+	//{
+	//	cout << pw[i] << ", ";
+	//}
+
+	//cout << "\n";
+	//system("pause");
+
+	//cout << "nwnwnw,,,,";
+	//for (int i = 0; i < nf1_sn; i++)
+	//{
+	//	cout << nw[i] << ", ";
+	//}
+
+	//cout << "\n\n";
+	//system("pause");
+
+
 	int cn2 = fn*(fn - 1) / 2;
 
 	for (int h = 0; h < cn2; ++h)
@@ -792,6 +873,9 @@ void WeakLearn(float pf1[][15], float nf1[][14],
 				sn_XY[z][1] = 2;
 			else
 				sn_XY[z][1] = 3;
+
+			//cout << "three: " << three[z - pf1_sn] <<", four: " << four[z - pf1_sn] << "\n";
+			//system("pause");
 		}
 
 		//cout << "q_Map" << "\n";
@@ -804,15 +888,22 @@ void WeakLearn(float pf1[][15], float nf1[][14],
 		//{
 		//	cout << sn_XY[x][0] << sn_XY[x][1] << "\n";
 		//}
+		//system("pause");
 
-		cout << "pw, ";
-		for (int j = 0; j < pf1_sn; j++)
-		{
-			cout << pw[j] << ", ";
-		}
+		//cout << "pw, ";
+		//for (int j = 0; j < pf1_sn; j++)
+		//{
+		//	cout << pw[j] << ", ";
+		//}
 
-		cout << "\n";
-		system("pause");
+		//cout << "\n";
+
+		//cout << "nw, ";
+		//for (int j = 0; j < nf1_sn; j++)
+		//{
+		//	cout << nw[j] << ", ";
+		//}
+		//system("pause");
 
 		//投票
 		for (int g = 0; g < pf1_sn + nf1_sn; g++)
@@ -820,15 +911,28 @@ void WeakLearn(float pf1[][15], float nf1[][14],
 			if (g < pf1_sn)
 				seatTable[sn_XY[g][0]][sn_XY[g][1]] += pw[g];
 			else
-				seatTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g-pf1_sn];				
+				seatTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g-pf1_sn];
+
+			//cout << "[" << sn_XY[g][0] << "]["<< sn_XY[g][1] << "] value=" << seatTable[sn_XY[g][0]][sn_XY[g][1]] << "\n";
+			//system("pause");
 		}
 
-		for (int j = 0; j < 4; j++)
-		{
-			cout << seatTable[j][0] << ", " << seatTable[j][1] << ", " << seatTable[j][2] << ", " << seatTable[j][3] << "\n";
-		}
+		//printf("[%d+%d]\n", list[h][0], list[h][1]);
+		//for (int q = 3; q >= 0; q--)
+		//{
+		//	cout << PorN(seatTable[0][q])
+		//		<< "|" << PorN(seatTable[1][q])
+		//		<< "|" << PorN(seatTable[2][q])
+		//		<< "|" << PorN(seatTable[3][q]) << "\n";
+		//}
+		//system("pause");
 
-		system("pause");
+		//for (int j = 0; j < 4; j++)
+		//{
+		//	cout << seatTable[j][0] << ", " << seatTable[j][1] << ", " << seatTable[j][2] << ", " << seatTable[j][3] << "\n";
+		//}
+
+		//system("pause");
 
 		return_Matrix[h] = 0;
 
@@ -847,16 +951,16 @@ void WeakLearn(float pf1[][15], float nf1[][14],
 					
 		}
 
-		printf("[%d+%d]\n", list[h][0], list[h][1]);
-		for (int q = 0; q < 4; q++)
-		{
-			cout << PorN(seatTable[q][0])
-				<< "|" << PorN(seatTable[q][1])
-				<< "|" << PorN(seatTable[q][2])
-				<< "|" << PorN(seatTable[q][3]) << "\n";
-		}
+		//printf("[%d+%d]\n", list[h][0], list[h][1]);
+		//for (int q = 3; q >= 0; q--)
+		//{
+		//	cout << PorN(seatTable[0][q])
+		//		<< "|" << PorN(seatTable[1][q])
+		//		<< "|" << PorN(seatTable[2][q])
+		//		<< "|" << PorN(seatTable[3][q]) << "\n";
+		//}
 
-		system("pause");
+		//system("pause");
 
 		//找最好的一刀
 		//for (int j = 1; j < 10; j++)
@@ -897,6 +1001,25 @@ void WeakLearn(float pf1[][15], float nf1[][14],
 			delete[] sn_XY[i];
 
 		delete[] sn_XY;
+
+		//cout << "pwpwpwpwpwpwp,,,,";
+		//for (int i = 0; i < pf1_sn; i++)
+		//{
+		//	cout << pw[i] << ", ";
+		//}
+
+		//cout << "\n";
+		//system("pause");
+
+		//cout << "nwnwnw,,,,";
+		//for (int i = 0; i < nf1_sn; i++)
+		//{
+		//	cout << nw[i] << ", ";
+		//}
+
+		//cout << "\n\n";
+		//system("pause");
+
 	}
 
 
