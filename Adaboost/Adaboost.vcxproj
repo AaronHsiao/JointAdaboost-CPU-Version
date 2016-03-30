@@ -17,9 +17,6 @@
   <ItemGroup>
     <ClCompile Include="..\WeakLeaner.cpp" />
   </ItemGroup>
-  <ItemGroup>
-    <None Include="packages.config" />
-  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{155416B0-C2CB-4D63-AA7D-0558932C68C3}</ProjectGuid>
     <RootNamespace>Adaboost</RootNamespace>

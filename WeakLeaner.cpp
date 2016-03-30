@@ -26,7 +26,7 @@ struct WeakLeanerOutput
 };
 
 
-void WeakLearn(float[][15], float[][14], float[], float[], int, int, int, int[][2], float*, float**);
+void WeakLearn(float[][15], float[][14], float[], float[], int, int, int, int[][2], float*, float**, int**);
 void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn, int times, int list[][2]);
 int AdaBoostTest(float data[], int data_sn, int data_fn);
 float MyRound(float);
@@ -305,12 +305,12 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 	//總資料個數total_SampleNumber
 	int total_sn = pf_sn + nf_sn;
 	
+	//正副資料結合成一大條暫時的陣列
+	float *temp_Range = new float[total_sn];
+
 	//算四分位
 	for (int g = 0; g < fn; g++)
 	{
-		//正副資料結合成一大條暫時的陣列
-		float *temp_Range = new float[total_sn];
-
 		//讀正資料進來
 		for (int z = 0; z < pf_sn; z++)
 			temp_Range[z] = pf[g][z];
@@ -369,6 +369,8 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		//cout << "檢查qIndex\n";
 		//cout << (int)q1_Index << ", " << (int)q2_Index << ", " << (int)q3_Index << "\n";
 	}
+
+	delete[] temp_Range;
 
 	/*
 	cout << "檢查q_Map" << "\n";
@@ -447,7 +449,7 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 	//compute.set_ret_buffer((float *)ret, fn * 3 * sizeof(float));
 
 
-	//做times次的WeakLeaner，換句話說，在此之上的程式碼只會執行一次
+	//做times次的WeakLearner，換句話說，在此之上的程式碼只會執行一次
 	for (int i = 0; i < times; i++)
 	{
 		wsum = 0;
@@ -485,6 +487,12 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		//輸出的陣列 存WeakLearn跑完輸出的各Feature錯誤率 
 		float *err_WeakLearn = new float[cn2];
 		
+		//每一個資料點的座標 一對一的記錄 所以有正臉數+副臉數
+		//sn_XY會傳入WeakLearn進行計算
+		int **sn_XY = new int*[total_sn];
+		for (int k = 0; k < total_sn; k++)
+			sn_XY[k] = new int[2];
+
 		//compute.reset_buffer(2, pw);
 		//compute.reset_buffer(3, nw);
 
@@ -495,7 +503,7 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 			參數說明 正資料pointer, 负資料pointer, 正資料權重, 负資料權重, 正資料個數, 负資料個數,
 			特徵數量, 組合式特徵清單, 回傳陣列, q_Map pointer
 		*/
-		WeakLearn(pf, nf,pw, nw, pf_sn, nf_sn, fn, list, err_WeakLearn, q_Map);
+		WeakLearn(pf, nf,pw, nw, pf_sn, nf_sn, fn, list, err_WeakLearn, q_Map, sn_XY);
 
 		//float theta = 0; 
 		//float polarity = 1;
@@ -510,11 +518,13 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 				error = err_WeakLearn[k];
 				selectif = k;
 			}
+
+			cout << "\n";
+			cout << "err_WeakLearn[" << k << "]= " << err_WeakLearn[k];
+			system("pause");
 		}
 
-		cout << pw[0] * 4 << "\n";
-		cout << "err_WeakLearn: " <<err_WeakLearn[0];
-		system("pause");
+
 
 		//Rebuild the error map, given k we know features
 
@@ -536,57 +546,8 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		//計票用的4*4的16宮格
 		float seatTable[4][4] = { 0 };
 
-		//每一個資料點的座標 一對一的記錄 所以有正臉數+副臉數
-		int **sn_XY = new int*[total_sn];
-		for (int k = 0; k < total_sn; k++)
-			sn_XY[k] = new int[2];
-
 		int indX = list[selectif][0];
 		int indY = list[selectif][1];
-
-		//拿出正臉資料 取得正臉座標
-		for (int z = 0; z < pf_sn; z++)
-		{
-			if (pf[indX][z] < q_Map[indX][0])
-				sn_XY[z][0] = 0;
-			else if (pf[indX][z] < q_Map[indX][1])
-				sn_XY[z][0] = 1;
-			else if (pf[indX][z] < q_Map[indX][2])
-				sn_XY[z][0] = 2;
-			else
-				sn_XY[z][0] = 3;
-
-			if (pf[indY][z] < q_Map[indY][0])
-				sn_XY[z][1] = 0;
-			else if (pf[indY][z] < q_Map[indY][1])
-				sn_XY[z][1] = 1;
-			else if (pf[indY][z] < q_Map[indY][2])
-				sn_XY[z][1] = 2;
-			else
-				sn_XY[z][1] = 3;
-		}
-
-		//拿出負臉資料 取得副臉座標
-		for (int z = pf_sn; z < nf_sn + pf_sn; z++)
-		{
-			if (nf[indX][z - pf_sn] < q_Map[indX][0])
-				sn_XY[z][0] = 0;
-			else if (nf[indX][z - pf_sn] < q_Map[indX][1])
-				sn_XY[z][0] = 1;
-			else if (nf[indX][z - pf_sn] < q_Map[indX][2])
-				sn_XY[z][0] = 2;
-			else
-				sn_XY[z][0] = 3;
-
-			if (nf[indY][z - pf_sn] < q_Map[indY][0])
-				sn_XY[z][1] = 0;
-			else if (nf[indY][z - pf_sn] < q_Map[indY][1])
-				sn_XY[z][1] = 1;
-			else if (nf[indY][z - pf_sn] < q_Map[indY][2])
-				sn_XY[z][1] = 2;
-			else
-				sn_XY[z][1] = 3;
-		}
 
 		//投票瞜
 		for (int g = 0; g < total_sn; g++)
@@ -657,18 +618,24 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 			//	<< "|" << PorN(seatTable[q][2])
 			//	<< "|" << PorN(seatTable[q][3]) << "\n";
 		}
-		
 
+		//釋放記憶體
+		for (int i = 0; i < total_sn; i++)
+			delete[] sn_XY[i];
+
+		delete[] sn_XY;
 	}
 
+	//釋放記憶體
 	for (int x = 0; x < fn;	x++)
 	{
 		delete[] q_Map[x];
 	}
 
+
+
 	delete[] q_Map;
 
-	//釋放記憶體
 	delete[] pw;
 	delete[] nw;
 }
@@ -728,7 +695,7 @@ int AdaBoostTest(float data[], int data_sn, int data_fn)
 			正資料個數, 负資料個數, 特徵數量, 組合式特徵清單, 回傳陣列, q_Map pointer 
 */
 void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[], 
-	int pf_sn, int nf_sn, int fn, int list[][2], float* return_Matrix, float** q_Map)
+	int pf_sn, int nf_sn, int fn, int list[][2], float* return_Matrix, float** q_Map, int** sn_XY)
 {
 	/*
 	cout << "檢查 pw 正資料權重:";
@@ -752,6 +719,7 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 	int total_sn = pf_sn + nf_sn;		//總資料個數 = 正資料+负資料
 	int cn2 = fn*(fn - 1) / 2;			//CN取2個特徵
 
+	//h(header)控制最外層的迴圈
 	for (int h = 0; h < cn2; ++h)
 	{	
 		/*  
@@ -832,6 +800,13 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 									{ 0, 0, 0, 0 }, 
 									{ 0, 0, 0, 0 }};
 
+		//seatTable16宮格延伸兩個屬性去紀錄 +-總合 (P=Postive, N=Negative)
+		float seatTable_PN[4][4][2] = { { { 0, 0}, { 0, 0}, { 0, 0}, { 0, 0} },
+										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
+										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
+										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } }, };
+
+
 		/*	
 				SampleNumber_XY 對每筆資料選出最好的XY值
 						X	Y
@@ -842,10 +817,6 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 				.
 		   pf_sn+fn_sn
 		*/
-
-		int **sn_XY = new int*[total_sn];
-		for (int k = 0; k < total_sn; k++)
-			sn_XY[k] = new int[2];
 
 		//先把正資料 丟到16宮格 看看座落於哪個座標
 		for (int z = 0; z < pf_sn; z++)
@@ -924,36 +895,69 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		{
 			if (g < pf_sn)
 			{
-				seatTable[sn_XY[g][0]][sn_XY[g][1]] += pw[g];
-				return_Matrix[h] += pw[g];
+				seatTable[sn_XY[g][0]][sn_XY[g][1]] += pw[g];		//直接就是存每一格總結果
+				seatTable_PN[sn_XY[g][0]][sn_XY[g][1]][0] += pw[g]; //統記每一格的正權重
+				//return_Matrix[h] += pw[g];
 			}
 				
 			else
 			{
-				seatTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g - pf_sn];
-				return_Matrix[h] += nw[g - pf_sn];
+				seatTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g - pf_sn];			//直接就是存每一格總結果
+				seatTable_PN[sn_XY[g][0]][sn_XY[g][1]][1] += nw[g - pf_sn];		//統記每一格的负權重(正值)
+				//return_Matrix[h] -= nw[g - pf_sn];
 			}
 
 			//cout << "[" << sn_XY[g][0] << "]["<< sn_XY[g][1] << "] value=" << seatTable[sn_XY[g][0]][sn_XY[g][1]] << "\n";
 			//system("pause");
 		}
 
-		
-		//printf("[%d+%d]\n", adaboost_XAxis, adaboost_YAxis);
-		//for (int q = 3; q >= 0; q--)
-		//{
-		//	cout << PorN(seatTable[0][q])
-		//		<< "|" << PorN(seatTable[1][q])
-		//		<< "|" << PorN(seatTable[2][q])
-		//		<< "|" << PorN(seatTable[3][q]) << "\n";
-		//}
-		//system("pause");
+		//有了每個資料點所在的XY座標 就可以進行投票(加減權重)
+		for (int x = 0; x < 4; x++)
+		{
+			for (int y = 0; y < 4; y++)
+			{
+				//正權重總合 >= 负權重總合 代表负的錯了
+				if (seatTable_PN[x][y][0] > seatTable_PN[x][y][1])
+				{
+					return_Matrix[h] += seatTable_PN[x][y][1];
+				}
+				//正權重總合 < 负權重總合 代表正的錯了
+				else if (seatTable_PN[x][y][0] < seatTable_PN[x][y][1])
+				{
+					return_Matrix[h] += seatTable_PN[x][y][0];
+				}
+				//相等時，預設被當成正的，负的被當成ERROR
+				else
+				{
+					return_Matrix[h] += seatTable_PN[x][y][0];;
+				}
+				
+			}
 
-		//for (int j = 0; j < 4; j++)
-		//	cout << seatTable[j][0] << ", " << seatTable[j][1] << ", " << seatTable[j][2] << ", " << seatTable[j][3] << "\n";
+			//cout << "[" << sn_XY[x][0] << "]["<< sn_XY[x][1] << "] value=" << seatTable[sn_XY[x][0]][sn_XY[x][1]] << "\n";
+			//system("pause");
+		}
 
-		//system("pause");
-		
+
+
+
+		/*
+		printf("[%d+%d]\n", adaboost_XAxis, adaboost_YAxis);
+		for (int q = 3; q >= 0; q--)
+		{
+			cout << PorN(seatTable[0][q])
+				<< "|" << PorN(seatTable[1][q])
+				<< "|" << PorN(seatTable[2][q])
+				<< "|" << PorN(seatTable[3][q]) << "\n";
+		}
+		system("pause");
+
+		for (int j = 0; j < 4; j++)
+			cout << seatTable[j][0] << ", " << seatTable[j][1] << ", " << seatTable[j][2] << ", " << seatTable[j][3] << "\n";
+
+		cout << "\nh=" << h << ", returen_Matrix=" << return_Matrix[h];
+		system("pause");
+		*/
 
 
 		//找最好的一刀
@@ -990,11 +994,6 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		//}
 		//float err_WeakLearn[] = { error, polarity, theta };
 		//return err_WeakLearn;
-
-		for (int i = 0; i < total_sn; i++)
-			delete[] sn_XY[i];
-
-		delete[] sn_XY;
 
 		//cout << "pwpwpwpwpwpwp,,,,";
 		//for (int i = 0; i < pf_sn; i++)
