@@ -25,20 +25,44 @@ struct WeakLeanerOutput
 		}
 };
 
+struct Model
+{
+	public:
+		float** bestTable;
+		float alpha;
+		float x;	//X軸的Feautre編號
+		float y;	//Y軸的Feautre編號
+
+		~Model()
+		{
+			for (int i = 0; i < 4; i++)
+			{
+				delete[] bestTable[i];
+			}
+		}
+};
+
 
 void WeakLearn(float[][15], float[][14], float[], float[], int, int, int, int[][2], float*, float**, int**);
 void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn, int times, int list[][2]);
-int AdaBoostTest(float data[], int data_sn, int data_fn);
+void AdaBoostTest(float[][5], int , int );
 float MyRound(float);
 string PorN(float);
 
 Compute compute("WeakLearn", CL_DEVICE_TYPE_GPU);
 
-const int times = 3000;	//訓練次數
+const int times = 5;	//訓練次數
 float F[times][4];	//用二維矩陣 存放每次訓練完之結果 4分別代表著 1. selectif(選到的Feature) 2. polarity(右邊是正or負資料) 3. error(錯誤率) 4. alpha值 
+
+//最終的模型(times張表)
+Model* model;
+
+float **q_Map;
 
 int main()
 {
+	model = new Model[times];
+
 	////float *err_WeakLearn = weakLearn(pf[0], nf[0], pw[0], nw[0], sizeof(pf) / sizeof(pf[0]), sizeof(nf) / sizeof(nf[0]));
 
 	//char file_Train_PF1[] = "G:\\Train_PF1.txt";   //2429*2101
@@ -203,22 +227,40 @@ int main()
 
 	////fp4.close();//關閉檔案
 
-	const int feature_Size = 3;		//特徵數量
-	const int pf_sample_Size = 15;	//正臉Sample數量
-	const int nf_sample_Size = 14;	//負臉Sample數量
+	const int feature_Size = 3;	//特徵數量
+	const int pf_sn_Train = 15;	//正臉Sample數量
+	const int nf_sn_Train = 14;	//負臉Sample數量
+
+
+	/*		q_Map示意圖
+	Q1	Q2	Q3
+	1
+	2
+	3
+	.
+	.
+	.
+	fn
+	*/
+
+	//四分位數的Map 二維陣列
+	q_Map = new float*[feature_Size];
+
+	for (int x = 0; x < feature_Size; x++)
+		q_Map[x] = new float[3];
+
+
+
 
 	//PF Sample Data
-	float TrainPF[feature_Size][pf_sample_Size] = { {1, 2, 7, 7, 7, 4, 5, 8, 6, 5, 9, 10, 3, 6, 8},
+	float TrainPF[feature_Size][pf_sn_Train] = { {1, 2, 7, 7, 7, 4, 5, 8, 6, 5, 9, 10, 3, 6, 8},
 													{7, 9, 3, 4, 6, 2, 2, 0, 1, 3, 4, 5, 7, 10, 2 },
 													{3, 6, 6, 6, 2, 4, 3, 1, 5, 8, 9, 5, 7, 9, 3 } };
 
 	//NF Sample Data
-	float TrainNF[feature_Size][nf_sample_Size] = { { 9, 1, 3, 4, 6, 2, 2, 2, 2, 7, 0, 8, 1, 3},
+	float TrainNF[feature_Size][nf_sn_Train] = { { 9, 1, 3, 4, 6, 2, 2, 2, 2, 7, 0, 8, 1, 3},
 													{ 7, 7, 4, 6, 3, 5, 6, 3, 2, 8, 9, 3, 1, 2},
 													{ 8, 5, 0, 10, 10, 2, 4, 1, 3, 5, 7, 2, 0, 9} };
-
-	//訓練次數為CN取2次
-	const int times = feature_Size*(feature_Size - 1) / 2;
 
 	//list[][] C3取2 示意圖
 	/*
@@ -227,13 +269,15 @@ int main()
 		[1][2]
 	*/
 
+	const int cn2 = feature_Size * (feature_Size - 1) / 2;
+
 	//CN取2的清單
-	int list[times][2];
+	int list[cn2][2];
 
 	//處理CN取2的實作 結果存於list
 	int start = 0;
 	int start_Nei = start + 1;
-	for (int i = 0; i < times;++i)
+	for (int i = 0; i < cn2; ++i)
 	{
 		list[i][0] = start;
 		list[i][1] = start_Nei;
@@ -259,7 +303,18 @@ int main()
 	clock_t begin = clock();
 	
 	//參數說明: 正資料pointer, 负資料pointer, 正資料sample數, 负資料sample數, 特徵數量, 訓練次數, CN取2的清單pointer
-	AdaBoostTrain(TrainPF, TrainNF, pf_sample_Size, nf_sample_Size, feature_Size, times, list);
+	AdaBoostTrain(TrainPF, TrainNF, pf_sn_Train, nf_sn_Train, feature_Size, times, list);
+
+	const int pf_sn_Test = 5;	//正臉Sample數量
+	const int nf_sn_Test = 4;	//負臉Sample數量
+
+	//NF Sample Data
+	float TestPF[feature_Size][pf_sn_Test] = { { 3, 1, 2, 4, 5 },
+												{ 0, 1, 7, 3, 5 },
+												{ 7, 1, 6, 2, 2 }, };
+
+	int alphaSum;
+	AdaBoostTest(TestPF, pf_sn_Test, feature_Size);
 
 	//int TP = AdaBoostTest(arr_Test_PF1[0], row_Test_PF1, column_Test_NF1);
 	//printf("%f/n", TP / row_Test_PF1);
@@ -269,7 +324,16 @@ int main()
 	double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
 	cout << "Time: " << elapsed_secs << " seconds!!!!" << endl;
 
-	////釋放記憶體
+	//釋放記憶體
+	for (int x = 0; x < feature_Size; x++)
+	{
+		delete[] q_Map[x];
+	}
+	delete[] q_Map;
+
+	delete[] model;
+
+
 	//for (int i = 0; i < row_Train_PF1; i++)
 	//{
 	//	delete[] arr_Train_PF1[i];
@@ -278,30 +342,12 @@ int main()
 	//delete[] arr_Train_PF1;
 	//delete[] arr_Train_NF1;
 
-	system("pause");
+	
 }
 
 //參數說明: 正資料pointer, 负資料pointer, 正資料sample數, 负資料sample數, 特徵數量, 訓練次數, CN取2的清單pointer
 void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn, int times, int list[][2])
 {
-	/*		q_Map示意圖
-			Q1	Q2	Q3
-		1
-		2
-		3
-		.
-		.
-		.
-		fn		
-	*/
-
-	//四分位數的Map 二維陣列
-	float **q_Map = new float*[fn];
-
-	for (int x = 0; x < fn;	x++)
-		q_Map[x] = new float[3];
-
-
 	//總資料個數total_SampleNumber
 	int total_sn = pf_sn + nf_sn;
 	
@@ -449,6 +495,7 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 	//compute.set_ret_buffer((float *)ret, fn * 3 * sizeof(float));
 
 
+
 	//做times次的WeakLearner，換句話說，在此之上的程式碼只會執行一次
 	for (int i = 0; i < times; i++)
 	{
@@ -543,25 +590,31 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		//公式可知 beta一定是越來越小
 		beta = error / (1 - error);
 
-		//計票用的4*4的16宮格
-		float seatTable[4][4] = { 0 };
+
+		//WeakLearn完成後的16宮格
+		float **bestTable = new float*[4];
+		for (int b = 0; b < 4; b++)
+			bestTable[b] = new float[4];
 
 		int indX = list[selectif][0];
 		int indY = list[selectif][1];
+
+		model[i].x = indX;
+		model[i].y = indY;
 
 		//投票瞜
 		for (int g = 0; g < total_sn; g++)
 		{
 			if (g < pf_sn)
-				seatTable[sn_XY[g][0]][sn_XY[g][1]] += pw[g];
+				bestTable[sn_XY[g][0]][sn_XY[g][1]] += pw[g];
 			else
-				seatTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g - pf_sn];
+				bestTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g - pf_sn];
 		}
 
 		//正臉調權重
 		for (int i = 0; i < pf_sn; i++)
 		{			
-			if (seatTable[sn_XY[i][0]][sn_XY[i][1]] >= 0)
+			if (bestTable[sn_XY[i][0]][sn_XY[i][1]] >= 0)
 			{
 				pw[i] = pw[i] * beta;
 			}
@@ -570,12 +623,14 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		//負臉調權重
 		for (int i = pf_sn; i < nf_sn+pf_sn; i++)
 		{
-			if (seatTable[sn_XY[i][0]][sn_XY[i][1]] < 0)
+			if (bestTable[sn_XY[i][0]][sn_XY[i][1]] < 0)
 			{
 				nw[i-pf_sn] = nw[i-pf_sn] * beta;
 			}
 		}
 
+		//每一次訓練完產出的Table 紀錄在Model之中
+		model[i].bestTable = bestTable;
 
 		//cout << "pwpwpwpwpwpwp,,,,";
 		//for (int i = 0; i < pf_sn; i++)
@@ -596,9 +651,6 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		//cout << "wsum: " << wsum;
 		//system("pause");
 
-
-
-
 		//printf("i=%d\n", i);
 
 		//F[i][0] = selectif;
@@ -609,14 +661,19 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		//把alpha值 四捨五入至小數第四位
 		F[i][3] = MyRound(F[i][3]);
 
+		model[i].alpha = log(1.0 / beta);
+
+		//cout << "beta: " << beta << "\n";
+		//cout << "alpha" << log(1.0 / beta) << "\n";
+
 		/*if (i % 100 == 0)*/
-		printf("[%d+%d] , %f, %f\n", list[i][0], list[i][1], selectif + 1, log(1 / beta));
+		printf("[%d+%d] , %d, %f\n", list[selectif][0], list[selectif][1], selectif + 1, model[i].alpha);
 		for (int q = 0; q < 4; q++)
 		{
-			//cout << PorN(seatTable[q][0])
-			//	<< "|" << PorN(seatTable[q][1])
-			//	<< "|" << PorN(seatTable[q][2])
-			//	<< "|" << PorN(seatTable[q][3]) << "\n";
+			//cout << PorN(bestTable[q][0])
+			//	<< "|" << PorN(bestTable[q][1])
+			//	<< "|" << PorN(bestTable[q][2])
+			//	<< "|" << PorN(bestTable[q][3]) << "\n";
 		}
 
 		//釋放記憶體
@@ -626,15 +683,7 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		delete[] sn_XY;
 	}
 
-	//釋放記憶體
-	for (int x = 0; x < fn;	x++)
-	{
-		delete[] q_Map[x];
-	}
 
-
-
-	delete[] q_Map;
 
 	delete[] pw;
 	delete[] nw;
@@ -656,38 +705,81 @@ string PorN(float num)
 		return "-";
 }
 
-int AdaBoostTest(float data[], int data_sn, int data_fn)
+void AdaBoostTest(float data[][5], int data_sn, int fn)
 {
-	float *predit = new float[data_sn];
-	int count = 0;
-	for (int i = 0; i < data_sn; i++)
+	int *score = new int[data_sn];
+	float alphaSum = 0;
+
+	for (int i = 0; i < times; i++)
 	{
-		for (int j = 0; j < data_fn; j++)
+		alphaSum += model[i].alpha;
+
+		int x = model[i].x;
+		int y = model[i].y;
+
+		//sn_XY會傳入WeakLearn進行計算
+		int **test_XY = new int*[data_sn];
+		for (int k = 0; k < data_sn; k++)
+			test_XY[k] = new int[2];
+
+		for (int j = 0; j < data_sn; j++)
 		{
-			for (int k = 0; k < sizeof(F) / sizeof(F[0]); k++)
-			{
-				if (F[k][1] == 1)
-				{
-					if (data[i*(data_sn - 1) + j] >= F[k][2])
-					{
-						predit[i] = predit[i] + F[k][3];
-					}
-				}
-				else
-				{
-					if (data[i*(data_sn - 1) + j] < F[k][2])
-					{
-						predit[i] = predit[i] + F[k][3];
-					}
-				}
-			}
-		}
-		if (predit[i] > 0.5)
-		{
-			count++;
+			if (data[x][j] < q_Map[x][0])
+				test_XY[j][0] = 0;
+			else if (data[x][j] < q_Map[x][1])
+				test_XY[j][0] = 1;
+			else if (data[x][j] < q_Map[x][2])
+				test_XY[j][0] = 2;
+			else
+				test_XY[j][0] = 3;
+
+			if (data[y][j] < q_Map[y][0])
+				test_XY[j][1] = 0;
+			else if (data[y][j] < q_Map[y][1])
+				test_XY[j][1] = 1;
+			else if (data[y][j] < q_Map[y][2])
+				test_XY[j][1] = 2;
+			else
+				test_XY[j][1] = 3;
+
+			if (model[i].bestTable[test_XY[j][0]][test_XY[j][1]] >= 0)
+				score[j] += model[i].alpha;
 		}
 	}
-	return count;
+
+	cout << "\nalphaSum: " << alphaSum << "\n";
+	system("pause");
+
+	//float *predit = new float[data_sn];
+	//int count = 0;
+	//for (int i = 0; i < data_sn; i++)
+	//{
+	//	for (int j = 0; j < data_fn; j++)
+	//	{
+	//		for (int k = 0; k < sizeof(F) / sizeof(F[0]); k++)
+	//		{
+	//			if (F[k][1] == 1)
+	//			{
+	//				if (data[i*(data_sn - 1) + j] >= F[k][2])
+	//				{
+	//					predit[i] = predit[i] + F[k][3];
+	//				}
+	//			}
+	//			else
+	//			{
+	//				if (data[i*(data_sn - 1) + j] < F[k][2])
+	//				{
+	//					predit[i] = predit[i] + F[k][3];
+	//				}
+	//			}
+	//		}
+	//	}
+	//	if (predit[i] > 0.5)
+	//	{
+	//		count++;
+	//	}
+	//}
+	//return count;
 }
 
 /*
@@ -929,7 +1021,7 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 				//相等時，預設被當成正的，负的被當成ERROR
 				else
 				{
-					return_Matrix[h] += seatTable_PN[x][y][0];;
+					return_Matrix[h] += seatTable_PN[x][y][1];;
 				}
 				
 			}
@@ -941,17 +1033,18 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 
 
 
-		/*
-		printf("[%d+%d]\n", adaboost_XAxis, adaboost_YAxis);
-		for (int q = 3; q >= 0; q--)
-		{
-			cout << PorN(seatTable[0][q])
-				<< "|" << PorN(seatTable[1][q])
-				<< "|" << PorN(seatTable[2][q])
-				<< "|" << PorN(seatTable[3][q]) << "\n";
-		}
-		system("pause");
+		
+		//printf("[%d+%d]\n", adaboost_XAxis, adaboost_YAxis);
+		//for (int q = 3; q >= 0; q--)
+		//{
+		//	cout << PorN(seatTable[0][q])
+		//		<< "|" << PorN(seatTable[1][q])
+		//		<< "|" << PorN(seatTable[2][q])
+		//		<< "|" << PorN(seatTable[3][q]) << "\n";
+		//}
+		//system("pause");
 
+		/*
 		for (int j = 0; j < 4; j++)
 			cout << seatTable[j][0] << ", " << seatTable[j][1] << ", " << seatTable[j][2] << ", " << seatTable[j][3] << "\n";
 
