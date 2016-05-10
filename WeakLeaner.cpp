@@ -46,7 +46,7 @@ void KNN_Search(float test_Re[], ReturnPair pair_PF[], ReturnPair pair_NF[],
 
 string PorN(float);
 
-const int times = 100;	//訓練次數
+const int times = 10;	//訓練次數
 const int Train_PF_Num = 233590;  // positive number Traing Data
 const int Train_NF_Num = 221629;  // negative number Traing Data
 const int KNN_ForTrainData = 5000; //例如:KNN找出一萬筆 正負訓練資料各五千
