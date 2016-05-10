@@ -37,7 +37,7 @@ public:
 	// Kernel
 	cl::Kernel kernel;
 	std::string kernel_name;
-	size_t kernel_arg_idx;
+	cl_uint kernel_arg_idx;
 	// CommandQueue
 	cl::CommandQueue command_queue;
 
@@ -151,7 +151,7 @@ public:
 	}
 
 	template<typename T>
-	void set_buffer(const T &val)
+	void set_buffer(const T val)
 	{
 		cl_int err;
 
@@ -162,8 +162,8 @@ public:
 		if (DEBUG)
 		{
 			std::cout << "[DEBUG] cl::Kernel::setArg "
-				<< this->kernel_arg_idx << ": "
-				<< "const setted"
+				<< this->kernel_arg_idx - 1 << ": "
+				<< val
 				<< std::endl;
 		}
 	}
@@ -201,7 +201,7 @@ public:
 		*
 		* The size of `buffs` should be same as this->buffers[index].
 		* */
-		assert(index < this->buffers.size());
+		assert(index < this->kernel_arg_idx);
 		assert(this->buffers[index] != NULL);
 
 		size_t size;
@@ -232,7 +232,7 @@ public:
 
 	void release_buffer(const size_t index)
 	{
-		assert(index < this->buffers.size());
+		assert(index < this->kernel_arg_idx);
 
 		delete this->buffers[index];
 		this->buffers[index] = NULL;
@@ -316,7 +316,7 @@ private:
 	{
 		cl_int err;
 
-		this->context = cl::Context::Context(devices,
+		this->context = cl::Context(devices,
 			NULL,  // property
 			NULL,  // call back
 			NULL,  // user_data
@@ -328,7 +328,7 @@ private:
 	void init_program()
 	{
 		cl_int err;
-		this->program = cl::Program::Program(
+		this->program = cl::Program(
 			context,
 			this->kernel_src,
 			true,  // build
@@ -370,7 +370,7 @@ private:
 	void init_kernel()
 	{
 		cl_int err;
-		this->kernel = cl::Kernel::Kernel(program, this->kernel_name.c_str(), &err);
+		this->kernel = cl::Kernel(program, this->kernel_name.c_str(), &err);
 		this->kernel_arg_idx = 0;
 
 		check_err(err, "cl::Kernel::Kernel");
@@ -379,7 +379,7 @@ private:
 	void init_command_queue()
 	{
 		cl_int err;
-		this->command_queue = cl::CommandQueue::CommandQueue(
+		this->command_queue = cl::CommandQueue(
 			this->context,
 			0,  // property
 			&err);

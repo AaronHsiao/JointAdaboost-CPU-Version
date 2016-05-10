@@ -9,22 +9,6 @@
 #include "compute.hpp"
 using namespace std;
 
-//自定結構 每做完一次WeakLeaner 會產生一組WeakLeanerOutput的結構 再存到F二維陣列之中
-struct WeakLeanerOutput
-{
-	public:
-		float theta;
-		float polarity;
-		float final_error;
-
-		WeakLeanerOutput()
-		{
-			theta = 0;
-			polarity = 0;
-			final_error = 0;
-		}
-};
-
 struct Model
 {
 	public:
@@ -42,237 +26,361 @@ struct Model
 		}
 };
 
+class ReturnPair
+{
+	public:
+		float previous_R_Sum;   //過去10、5、1分鐘的報酬率總合
+		float target_R;			//未來30分鐘的報酬
+		int pf_Index;			//正資料索引值
+		int nf_Index;			//負資料索引值
+};
 
-void WeakLearn(float[][15], float[][14], float[], float[], int, int, int, int[][2], float*, float**, int**);
-void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn, int times, int list[][2]);
-void AdaBoostTest(float[][5], int , int );
-float MyRound(float);
+bool CompareR(ReturnPair, ReturnPair);
+void WeakLearn(float[][5000], float[][5000], float[], float[], int[][2], float*, int**);
+void AdaBoostTrain(float[][5000], float[][5000], int [][2]);
+void AdaBoostTest(float data_Fe[], float data_Re[]);
+
+void KNN_Search(float test_Re[], ReturnPair pair_PF[], ReturnPair pair_NF[],
+	float arr_Fe_PF[][233590], float arr_Fe_NF[][221629], float arr_Re_PF[][233590], float arr_Re_NF[][221629],
+	float real_Fe_PF[][5000], float real_Fe_NF[][5000], float real_Re_PF[][5000], float real_Re_NF[][5000]);
+
 string PorN(float);
 
-Compute compute("WeakLearn", CL_DEVICE_TYPE_GPU);
+const int times = 100;	//訓練次數
+const int Train_PF_Num = 233590;  // positive number Traing Data
+const int Train_NF_Num = 221629;  // negative number Traing Data
+const int KNN_ForTrainData = 5000; //例如:KNN找出一萬筆 正負訓練資料各五千
+const int Test_PF_Num = 211;
+const int Test_NF_Num = 250;
+//const int Test_PF_Num = 18341;	// positive number Testing Data
+//const int Test_NF_Num = 18219;  // negative number Testing Data
+const int fn = 162;		// feature number
+const int rn = 4;		// return number
 
-const int times = 5;	//訓練次數
-float F[times][4];	//用二維矩陣 存放每次訓練完之結果 4分別代表著 1. selectif(選到的Feature) 2. polarity(右邊是正or負資料) 3. error(錯誤率) 4. alpha值 
+float success_Count = 0.0;
+float fail_Count = 0.0;
+float total_Count = 0.0;
+float predict_Rate = 0.0;
+float total_Profit = 0.0;
+
+fstream file_Output;
 
 //最終的模型(times張表)
 Model* model;
-
 float **q_Map;
+
+//總資料個數total_SampleNumber
+int total_sn = KNN_ForTrainData*2;
+const int cn2 = fn * (fn - 1) / 2;
 
 int main()
 {
-	model = new Model[times];
+	//讀資料是全部都讀 共分兩大類Feautre與Return
+	char file_Train_Fe_PF[] = "D:\\Ada_Train\\2001-2012_F_Train_PF.txt";    //233590*162
+	char file_Train_Re_PF[] = "D:\\Ada_Train\\2001-2012_Re_Train_PF.txt";   //233590*4
+	char file_Train_Fe_NF[] = "D:\\Ada_Train\\2001-2012_F_Train_NF.txt";    //221629*162
+	char file_Train_Re_NF[] = "D:\\Ada_Train\\2001-2012_Re_Train_NF.txt";   //221629*4
 
-	////float *err_WeakLearn = weakLearn(pf[0], nf[0], pw[0], nw[0], sizeof(pf) / sizeof(pf[0]), sizeof(nf) / sizeof(nf[0]));
+	//一個禮拜的測試資料 共(165*10)筆分鐘資料
+	char file_Test_Fe_PF[] = "D:\\Ada_Test\\2013_F_Test_PF.txt";	   //418*162
+	char file_Test_Re_PF[] = "D:\\Ada_Test\\2013_Re_Test_PF.txt";	   //418*4
+	char file_Test_Fe_NF[] = "D:\\Ada_Test\\2013_F_Test_NF.txt";	   //349*162
+	char file_Test_Re_NF[] = "D:\\Ada_Test\\2013_Re_Test_NF.txt";	   //349*4 
 
-	//char file_Train_PF1[] = "G:\\Train_PF1.txt";   //2429*2101
-	//char file_Train_NF1[] = "G:\\Train_NF1.txt";   //4548*2101
-	//char file_Test_PF1[] = "G:\\Test_PF1.txt";	   //472*2101
-	//char file_Test_NF1[] = "G:\\Test_NF1.txt";	   //23573*2101
+	//char file_Test_Re_PF[] = "G:\\2013_Re_Test_PF.txt";	   //18341*4
+	//char file_Test_Fe_PF[] = "G:\\2013_F_Test_PF.txt";	   //18341*162
+	//char file_Test_Re_NF[] = "G:\\2013_Re_Test_NF.txt";	   //18219*4 
+	//char file_Test_Fe_NF[] = "G:\\2013_F_Test_NF.txt";	   //18219*162
 
-	//const int row_Train_PF1 = 2101;
-	//const int column_Train_PF1 = 2429;
+	//輸出檔案
+	char file_Result[] = "JointAdaboost_GPU_30分鐘_5000knn_訓練3次.csv";
+	file_Output.open(file_Result, ios::out);//開啟檔案
+	if (!file_Output){//如果開啟檔案失敗，file_Output為0；成功，file_Output為非0
+		cout << "Fail to open file: " << file_Result << endl;
+	}
 
-	//auto arr_Train_PF1 = new float[row_Train_PF1][column_Train_PF1];
+	//最原始的Traing Data 數量龐大
+	auto arr_Train_Fe_PF = new float[fn][Train_PF_Num];
+	auto arr_Train_Fe_NF = new float[fn][Train_NF_Num];
+	auto arr_Train_Re_PF = new float[rn][Train_PF_Num];
+	auto arr_Train_Re_NF = new float[rn][Train_NF_Num];
 
-	//////動態配置二維矩陣 否則會StackOverFlow
-	////arr_Train_PF1 = new float*[row_Train_PF1];
-	////for (int i = 0; i<row_Train_PF1; i++)
-	////	arr_Train_PF1[i] = new float[column_Train_PF1];
+	//真正去學習的只有從KNN找出的一萬筆 正負各給五千
+	auto real_Train_Fe_PF = new float[fn][KNN_ForTrainData];
+	auto real_Train_Fe_NF = new float[fn][KNN_ForTrainData];
+	auto real_Train_Re_PF = new float[rn][KNN_ForTrainData];
+	auto real_Train_Re_NF = new float[rn][KNN_ForTrainData];
 
-	//fstream fp1;
-	//char line1[256];
+	auto arr_Test_Fe_PF = new float[fn][Test_PF_Num];
+	auto arr_Test_Fe_NF = new float[fn][Test_NF_Num];
+	auto arr_Test_Re_PF = new float[rn][Test_PF_Num];
+	auto arr_Test_Re_NF = new float[rn][Test_NF_Num];
 
-	//fp1.open(file_Train_PF1, ios::in);//開啟檔案
-	//if (!fp1){//如果開啟檔案失敗，fp為0；成功，fp為非0
-	//	cout << "Fail to open file: " << file_Train_PF1 << endl;
-	//}
+	//KNN Search Function中所需要的資料結構 
+	//將(1)過去報酬率 (2)未來報酬率 (3)索引值 綁定後再做排序
+	auto pair_PF = new ReturnPair[Train_PF_Num];
+	auto pair_NF = new ReturnPair[Train_NF_Num];
 
-	//int i1 = 0;
-	//int j1 = 0;
-
-	//while (fp1.getline(line1, sizeof(line1), '\t'))
-	//{
-	//	if (i1 == column_Train_PF1)
-	//		break;
-
-	//	arr_Train_PF1[j1][i1] = atof(line1);
-
-	//	j1++;
-
-	//	if (j1 == row_Train_PF1)
-	//	{
-	//		j1 = 0;
-	//		i1++;
-	//	}
-	//}
-	////cout << arr_Train_PF1[0][0] << endl;
-	////cout << arr_Train_PF1[0][2428] << endl;
-	////cout << arr_Train_PF1[2100][0] << endl;
-	////cout << arr_Train_PF1[2100][2428] << endl;
-
-	//fp1.close();//關閉檔案
-
-	//const int row_Train_NF1 = 2101;
-	//const int column_Train_NF1 = 4548;
-	//auto arr_Train_NF1 = new float[row_Train_NF1][column_Train_NF1];
-
-	////動態配置二維矩陣 否則會StackOverFlow
-	////arr_Train_NF1 = new float*[row_Train_NF1];
-	////for (int i = 0; i<row_Train_NF1; i++)
-	////	arr_Train_NF1[i] = new float[column_Train_NF1];
-
-	//fstream fp2;
-	//char line2[256];
-
-	//fp2.open(file_Train_NF1, ios::in);//開啟檔案
-	//if (!fp2){//如果開啟檔案失敗，fp為0；成功，fp為非0
-	//	cout << "Fail to open file: " << file_Train_NF1 << endl;
-	//}
-
-	//int i2 = 0;
-	//int j2 = 0;
-
-	//while (fp2.getline(line2, sizeof(line2), '\t'))
-	//{
-	//	if (i2 == column_Train_NF1)
-	//		break;
-
-	//	arr_Train_NF1[j2][i2] = atof(line2);
-
-	//	j2++;
-
-	//	if (j2 == row_Train_NF1)
-	//	{
-	//		j2 = 0;
-	//		i2++;
-	//	}
-	//}
-
-	//fp2.close();//關閉檔案
-
-	////const int row_Test_PF1 = 472;
-	////const int column_Test_PF1 = 2101;
-	////float **arr_Test_PF1;
-
-	//////動態配置二維矩陣 否則會StackOverFlow
-	////arr_Test_PF1 = new float*[row_Test_PF1];
-	////for (int i = 0; i<row_Test_PF1; i++)
-	////	arr_Test_PF1[i] = new float[column_Test_PF1];
-
-	////fstream fp3;
-	////char line3[128];
-
-	////fp3.open(file_Test_PF1, ios::in);//開啟檔案
-	////if (!fp3){//如果開啟檔案失敗，fp為0；成功，fp為非0
-	////	cout << "Fail to open file: " << file_Test_PF1 << endl;
-	////}
-
-	////int i3 = 0;
-	////int j3 = 0;
-
-	////while (fp3.getline(line3, sizeof(line3), '\t'))
-	////{
-	////	if (i3 == row_Test_PF1)
-	////		break;
-
-	////	arr_Test_PF1[i3][j3] = atof(line3);
-
-	////	j3++;
-
-	////	if (j3 == column_Test_PF1)
-	////	{
-	////		j3 = 0;
-	////		i3++;
-	////	}
-	////}
-
-	////fp3.close();//關閉檔案
-
-	////const int row_Test_NF1 = 23573;
-	//const int column_Test_NF1 = 2101;
-	////float **arr_Test_NF1;
-
-	//////動態配置二維矩陣 否則會StackOverFlow
-	////arr_Test_NF1 = new float*[row_Test_NF1];
-	////for (int i = 0; i<row_Test_NF1; i++)
-	////	arr_Test_NF1[i] = new float[column_Test_NF1];
-
-	////fstream fp4;
-	////char line4[128];
-
-	////fp4.open(file_Test_NF1, ios::in);//開啟檔案
-	////if (!fp4){//如果開啟檔案失敗，fp為0；成功，fp為非0
-	////	cout << "Fail to open file: " << file_Test_NF1 << endl;
-	////}
-
-	////int i4 = 0;
-	////int j4 = 0;
-
-	////while (fp4.getline(line4, sizeof(line4), '\t'))
-	////{
-	////	if (i4 == row_Test_NF1)
-	////		break;
-
-	////	arr_Test_NF1[i4][j4] = atof(line4);
-
-	////	j4++;
-
-	////	if (j4 == column_Test_NF1)
-	////	{
-	////		j4 = 0;
-	////		i4++;
-	////	}
-	////}
-
-	////fp4.close();//關閉檔案
-
-	const int feature_Size = 3;	//特徵數量
-	const int pf_sn_Train = 15;	//正臉Sample數量
-	const int nf_sn_Train = 14;	//負臉Sample數量
-
-
-	/*		q_Map示意圖
-	Q1	Q2	Q3
-	1
-	2
-	3
-	.
-	.
-	.
-	fn
+	/*
+	利用'\t'當作分隔符號
+	將[rows][feature]轉置成[feature][rows]方便平行運算的Code處理
+	有Feature以及Return兩種資料需要處理
 	*/
 
-	//四分位數的Map 二維陣列
-	q_Map = new float*[feature_Size];
+	fstream fp1;
+	char line1[256];
 
-	for (int x = 0; x < feature_Size; x++)
-		q_Map[x] = new float[3];
+	fp1.open(file_Train_Fe_PF, ios::in);//開啟檔案
+	if (!fp1){//如果開啟檔案失敗，fp為0；成功，fp為非0
+		cout << "Fail to open file: " << file_Train_Fe_PF << endl;
+	}
+
+	int i1 = 0;
+	int j1 = 0;
+
+	while (fp1.getline(line1, sizeof(line1), '\t'))
+	{
+		if (i1 == Train_PF_Num)
+			break;
+
+		//atof是一種將字串轉為浮點數的函數
+		arr_Train_Fe_PF[j1][i1] = atof(line1);
+
+		j1++;
+
+		if (j1 == fn)
+		{
+			j1 = 0;
+			i1++;
+		}
+	}
+	fp1.close();//關閉檔案
+
+	fp1.open(file_Train_Re_PF, ios::in);//開啟檔案
+	if (!fp1){//如果開啟檔案失敗，fp為0；成功，fp為非0
+		cout << "Fail to open file: " << file_Train_Re_PF << endl;
+	}
+
+	i1 = 0;
+	j1 = 0;
+
+	while (fp1.getline(line1, sizeof(line1), '\t'))
+	{
+		if (i1 == Train_PF_Num)
+			break;
+
+		//atof是一種將字串轉為浮點數的函數
+		arr_Train_Re_PF[j1][i1] = atof(line1);
+
+		j1++;
+
+		if (j1 == rn)
+		{
+			j1 = 0;
+			i1++;
+		}
+	}
+	fp1.close();//關閉檔案
 
 
 
+	fstream fp2;
+	char line2[256];
 
-	//PF Sample Data
-	float TrainPF[feature_Size][pf_sn_Train] = { {1, 2, 7, 7, 7, 4, 5, 8, 6, 5, 9, 10, 3, 6, 8},
-													{7, 9, 3, 4, 6, 2, 2, 0, 1, 3, 4, 5, 7, 10, 2 },
-													{3, 6, 6, 6, 2, 4, 3, 1, 5, 8, 9, 5, 7, 9, 3 } };
+	fp2.open(file_Train_Fe_NF, ios::in);//開啟檔案
+	if (!fp2){//如果開啟檔案失敗，fp為0；成功，fp為非0
+		cout << "Fail to open file: " << file_Train_Fe_NF << endl;
+	}
 
-	//NF Sample Data
-	float TrainNF[feature_Size][nf_sn_Train] = { { 9, 1, 3, 4, 6, 2, 2, 2, 2, 7, 0, 8, 1, 3},
-													{ 7, 7, 4, 6, 3, 5, 6, 3, 2, 8, 9, 3, 1, 2},
-													{ 8, 5, 0, 10, 10, 2, 4, 1, 3, 5, 7, 2, 0, 9} };
+	int i2 = 0;
+	int j2 = 0;
 
-	//list[][] C3取2 示意圖
+	while (fp2.getline(line2, sizeof(line2), '\t'))
+	{
+		if (i2 == Train_NF_Num)
+			break;
+
+		arr_Train_Fe_NF[j2][i2] = atof(line2);
+
+		j2++;
+
+		if (j2 == fn)
+		{
+			j2 = 0;
+			i2++;
+		}
+	}
+
+	fp2.close();//關閉檔案
+
+	fp2.open(file_Train_Re_NF, ios::in);//開啟檔案
+	if (!fp2){//如果開啟檔案失敗，fp為0；成功，fp為非0
+		cout << "Fail to open file: " << file_Train_Re_NF << endl;
+	}
+
+	i2 = 0;
+	j2 = 0;
+
+	while (fp2.getline(line2, sizeof(line2), '\t'))
+	{
+		if (i2 == Train_NF_Num)
+			break;
+
+		arr_Train_Re_NF[j2][i2] = atof(line2);
+
+		j2++;
+
+		if (j2 == rn)
+		{
+			j2 = 0;
+			i2++;
+		}
+	}
+
+	fp2.close();//關閉檔案
+
+
+	fstream fp3;
+	char line3[256];
+
+	fp3.open(file_Test_Fe_PF, ios::in);//開啟檔案
+	if (!fp3){//如果開啟檔案失敗，fp為0；成功，fp為非0
+		cout << "Fail to open file: " << file_Test_Fe_PF << endl;
+	}
+
+	int i3 = 0;
+	int j3 = 0;
+
+	while (fp3.getline(line3, sizeof(line3), '\t'))
+	{
+		if (i3 == Test_PF_Num)
+			break;
+
+		arr_Test_Fe_PF[j3][i3] = atof(line3);
+
+		j3++;
+
+		if (j3 == fn)
+		{
+			j3 = 0;
+			i3++;
+		}
+	}
+
+	fp3.close();//關閉檔案
+
+	fp3.open(file_Test_Re_PF, ios::in);//開啟檔案
+	if (!fp3){//如果開啟檔案失敗，fp為0；成功，fp為非0
+		cout << "Fail to open file: " << file_Test_Re_PF << endl;
+	}
+
+	i3 = 0;
+	j3 = 0;
+
+	while (fp3.getline(line3, sizeof(line3), '\t'))
+	{
+		if (i3 == Test_PF_Num)
+			break;
+
+		arr_Test_Re_PF[j3][i3] = atof(line3);
+
+		j3++;
+
+		if (j3 == rn)
+		{
+			j3 = 0;
+			i3++;
+		}
+	}
+
+	fp3.close();//關閉檔案
+
+	//for (size_t i = 0; i < Test_PF_Num; i++)
+	//{
+	//	cout << arr_Test_Re_PF[0][i] << "\n";
+	//	cout << arr_Test_Re_PF[1][i] << "\n";
+	//	cout << arr_Test_Re_PF[2][i] << "\n";
+	//	cout << arr_Test_Re_PF[3][i] << "\n";
+	//	system("pause");
+	//}
+
+	fstream fp4;
+	char line4[256];
+
+	fp4.open(file_Test_Fe_NF, ios::in);//開啟檔案
+	if (!fp4){//如果開啟檔案失敗，fp為0；成功，fp為非0
+		cout << "Fail to open file: " << file_Test_Fe_NF << endl;
+	}
+
+	int i4 = 0;
+	int j4 = 0;
+
+	while (fp4.getline(line4, sizeof(line4), '\t'))
+	{
+		if (i4 == Test_NF_Num)
+			break;
+
+		arr_Test_Fe_NF[j4][i4] = atof(line4);
+
+		j4++;
+
+		if (j4 == fn)
+		{
+			j4 = 0;
+			i4++;
+		}
+	}
+
+	fp4.close();//關閉檔案
+
+	fp4.open(file_Test_Re_NF, ios::in);//開啟檔案
+	if (!fp4){//如果開啟檔案失敗，fp為0；成功，fp為非0
+		cout << "Fail to open file: " << file_Test_Re_NF << endl;
+	}
+
+	i4 = 0;
+	j4 = 0;
+
+	while (fp4.getline(line4, sizeof(line4), '\t'))
+	{
+		if (i4 == Test_NF_Num)
+			break;
+
+		arr_Test_Re_NF[j4][i4] = atof(line4);
+
+		j4++;
+
+		if (j4 == rn)
+		{
+			j4 = 0;
+			i4++;
+		}
+	}
+
+	fp4.close();//關閉檔案
+
+	//for (size_t i = 0; i < Test_NF_Num; i++)
+	//{
+	//	cout << arr_Test_Re_NF[0][i] << "\n";
+	//	cout << arr_Test_Re_NF[1][i] << "\n";
+	//	cout << arr_Test_Re_NF[2][i] << "\n";
+	//	cout << arr_Test_Re_NF[3][i] << "\n";
+	//	system("pause");
+	//}
+	
+	//訓練幾次就有幾個Model
+	model = new Model[times];
+
+	//CN取2的清單
+	int list[cn2][2];
+
 	/*
+		list[][] C3取2 示意圖
+		---------------------
 		[0][1]
 		[0][2]
 		[1][2]
 	*/
-
-	const int cn2 = feature_Size * (feature_Size - 1) / 2;
-
-	//CN取2的清單
-	int list[cn2][2];
 
 	//處理CN取2的實作 結果存於list
 	int start = 0;
@@ -282,7 +390,7 @@ int main()
 		list[i][0] = start;
 		list[i][1] = start_Nei;
 
-		if (start_Nei + 1 >= feature_Size)
+		if (start_Nei + 1 >= fn)
 		{
 			start++;
 			start_Nei = start + 1;
@@ -294,45 +402,184 @@ int main()
 	}
 
 	/*檢查CN取2的結果
-	for (int j = 0; j < times; ++j)
-	{
-		cout << list[j][0] << ", " << list[j][1] << endl;
-	}
+		for (int j = 0; j < times; ++j)
+		{
+			cout << list[j][0] << ", " << list[j][1] << endl;
+		}
 	*/
 
-	clock_t begin = clock();
-	
-	//參數說明: 正資料pointer, 负資料pointer, 正資料sample數, 负資料sample數, 特徵數量, 訓練次數, CN取2的清單pointer
-	AdaBoostTrain(TrainPF, TrainNF, pf_sn_Train, nf_sn_Train, feature_Size, times, list);
-
-	const int pf_sn_Test = 5;	//正臉Sample數量
-	const int nf_sn_Test = 4;	//負臉Sample數量
-
-	//NF Sample Data
-	float TestPF[feature_Size][pf_sn_Test] = { { 3, 1, 2, 4, 5 },
-												{ 0, 1, 7, 3, 5 },
-												{ 7, 1, 6, 2, 2 }, };
-
-	int alphaSum;
-	AdaBoostTest(TestPF, pf_sn_Test, feature_Size);
-
-	//int TP = AdaBoostTest(arr_Test_PF1[0], row_Test_PF1, column_Test_NF1);
-	//printf("%f/n", TP / row_Test_PF1);
-	//int FP = row_Test_NF1-AdaBoostTest(arr_Test_NF1[0], row_Test_NF1, column_Test_NF1);
-	//printf("%f/n", FP / row_Test_NF1);
-	clock_t end = clock();
-	double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-	cout << "Time: " << elapsed_secs << " seconds!!!!" << endl;
-
-	//釋放記憶體
-	for (int x = 0; x < feature_Size; x++)
+	//看有Testing Data有幾筆分鐘資料 就訓練幾次Model
+	for (size_t i = 0; i < Test_PF_Num + Test_NF_Num; i++)
 	{
-		delete[] q_Map[x];
+		auto return_Test = new float[rn];
+		auto feature_Test = new float[fn];
+
+		//postive
+		if (i < Test_PF_Num)
+		{
+			for (size_t a = 0; a < rn; a++)
+			{
+				return_Test[a] = arr_Test_Re_PF[a][i];
+			}
+			for (size_t b = 0; b < fn; b++)
+			{
+				feature_Test[b] = arr_Test_Fe_PF[b][i];
+			}
+		}
+		//negative
+		else if (i < Test_PF_Num + Test_NF_Num)
+		{
+			for (size_t a = 0; a < rn; a++)
+			{
+				return_Test[a] = arr_Test_Re_NF[a][i - Test_PF_Num];
+			}
+			for (size_t b = 0; b < fn; b++)
+			{
+				feature_Test[b] = arr_Test_Fe_NF[b][i - Test_PF_Num];
+			}
+		}
+
+		KNN_Search(return_Test, pair_PF, pair_NF,
+			arr_Train_Fe_PF, arr_Train_Fe_NF, arr_Train_Re_PF, arr_Train_Re_NF,
+			real_Train_Fe_PF, real_Train_Fe_NF, real_Train_Re_PF, real_Train_Re_NF);
+
+		//四分位數的Map 二維陣列
+		q_Map = new float*[fn];
+		for (int x = 0; x < fn; x++)
+			q_Map[x] = new float[3];
+
+		/*
+		q_Map示意圖
+		-----------
+		Q1	Q2	Q3
+		1   2	5	7
+		2	8	12	16
+		3
+		.
+		.
+		.
+		fn
+		*/
+
+		//正副資料結合成一大條暫時的陣列
+		float *temp_Range = new float[total_sn];
+
+		//算四分位
+		for (int g = 0; g < fn; g++)
+		{
+			//讀正資料進來
+			for (int z = 0; z < KNN_ForTrainData; z++)
+				temp_Range[z] = real_Train_Fe_PF[g][z];
+
+			//讀负資料進來
+			for (int z = 0; z < KNN_ForTrainData; z++)
+				temp_Range[z + KNN_ForTrainData] = real_Train_Fe_NF[g][z];
+
+			/*
+			cout << "檢查還沒排序過的temp_Range";
+			for (int z = 0; z < total_sn; z++)
+			cout << "" << temp_Range[z] << ", ";
+			cout << "\n";
+			*/
+
+			//利用內建Library排序瞜 傳入頭尾即可
+			sort(temp_Range, temp_Range + total_sn);
+
+			/*
+			cout << "檢查排序過的temp_Range";
+			for (int z = 0; z < total_sn; z++)
+			cout << " " << temp_Range[z] << ", ";
+			cout << "\n";
+			system("pause");
+			*/
+
+			float q1_Index = (total_sn + 1) / 4.0;
+			float q2_Index = (total_sn + 1) / 2.0;
+			float q3_Index = (total_sn + 1) / 4.0 * 3.0;
+
+			//cout << "檢查Q1、Q2、Q3\n";
+			//cout << q1_Index << ", " << q2_Index << ", " << q3_Index << "\n";
+
+			//內插法處理 7.5這種情形 (7+8)/2
+			if ((total_sn + 1) % 4 == 0)
+			{
+				q_Map[g][0] = temp_Range[(int)q1_Index - 1];
+				q_Map[g][2] = temp_Range[(int)q3_Index - 1];
+			}
+			else
+			{
+				q_Map[g][0] = (temp_Range[(int)q1_Index - 1] + temp_Range[(int)q1_Index]) / 2;
+				q_Map[g][2] = (temp_Range[(int)q3_Index - 1] + temp_Range[(int)q3_Index]) / 2;
+			}
+
+			//Q2除以四後還要乘二，獨立處理
+			if ((total_sn + 1) % 2 == 0)
+			{
+				q_Map[g][1] = temp_Range[(int)q2_Index - 1];
+			}
+			else
+			{
+				q_Map[g][1] = (temp_Range[(int)q2_Index - 1] + temp_Range[(int)q2_Index]) / 2;
+			}
+
+			//cout << "檢查qIndex\n";
+			//cout << (int)q1_Index << ", " << (int)q2_Index << ", " << (int)q3_Index << "\n";
+
+			//將資料數值轉成座標
+			for (size_t k = 0; k < KNN_ForTrainData; k++)
+			{
+				if (real_Train_Fe_PF[g][k] < q_Map[g][0])
+					real_Train_Fe_PF[g][k] = 0;
+				else if (real_Train_Fe_PF[g][k] < q_Map[g][1])
+					real_Train_Fe_PF[g][k] = 1;
+				else if (real_Train_Fe_PF[g][k] < q_Map[g][2])
+					real_Train_Fe_PF[g][k] = 2;
+				else
+					real_Train_Fe_PF[g][k] = 3;
+
+				if (real_Train_Fe_NF[g][k] < q_Map[g][0])
+					real_Train_Fe_NF[g][k] = 0;
+				else if (real_Train_Fe_NF[g][k] < q_Map[g][1])
+					real_Train_Fe_NF[g][k] = 1;
+				else if (real_Train_Fe_NF[g][k] < q_Map[g][2])
+					real_Train_Fe_NF[g][k] = 2;
+				else
+					real_Train_Fe_NF[g][k] = 3;
+			}
+		}
+
+		delete[] temp_Range;
+
+		/*
+		cout << "檢查q_Map" << "\n";
+		for (int g = 0; g < fn; g++)
+		{
+			cout << q << ": " << q_Map[g][0] << ", " << q_Map[g][1] << ", " << q_Map[g][2] << "\n";
+		}
+		system("pause");
+		*/
+
+		clock_t train_beginTime = clock();
+		//參數說明: 正資料pointer, 负資料pointer, 正資料sample數, 负資料sample數, 特徵數量, 訓練次數, CN取2的清單pointer
+		AdaBoostTrain(real_Train_Fe_PF, real_Train_Fe_NF, list);
+		clock_t train_endTime = clock();
+		double train_Sec = double(train_endTime - train_beginTime) / CLOCKS_PER_SEC;
+		cout << "Adaboost Train: " << train_Sec << " seconds!!!!" << endl;
+
+		AdaBoostTest(feature_Test, return_Test);
+
+		//釋放記憶體
+		delete[] return_Test;
+		delete[] feature_Test;
+	
+		for (int x = 0; x < fn; x++)
+		{
+			delete[] q_Map[x];
+		}
+		delete[] q_Map;
 	}
-	delete[] q_Map;
 
 	delete[] model;
-
 
 	//for (int i = 0; i < row_Train_PF1; i++)
 	//{
@@ -346,155 +593,70 @@ int main()
 }
 
 //參數說明: 正資料pointer, 负資料pointer, 正資料sample數, 负資料sample數, 特徵數量, 訓練次數, CN取2的清單pointer
-void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn, int times, int list[][2])
+void AdaBoostTrain(float pf[][5000], float nf[][5000], int list[][2])
 {
-	//總資料個數total_SampleNumber
-	int total_sn = pf_sn + nf_sn;
-	
-	//正副資料結合成一大條暫時的陣列
-	float *temp_Range = new float[total_sn];
-
-	//算四分位
-	for (int g = 0; g < fn; g++)
-	{
-		//讀正資料進來
-		for (int z = 0; z < pf_sn; z++)
-			temp_Range[z] = pf[g][z];
-
-		//讀负資料進來
-		for (int z = 0; z < nf_sn; z++)
-			temp_Range[z + pf_sn] = nf[g][z];
-
-		/*
-		cout << "檢查還沒排序過的temp_Range";
-		for (int z = 0; z < total_sn; z++)
-			cout << "" << temp_Range[z] << ", ";
-		cout << "\n";
-		*/
-
-		//利用內建Library排序瞜 傳入頭尾即可
-		sort(temp_Range, temp_Range+total_sn);
-
-		/*
-		cout << "檢查排序過的temp_Range";
-		for (int z = 0; z < total_sn; z++)
-			cout << " " << temp_Range[z] << ", ";
-		cout << "\n";
-		system("pause");
-		*/
-
-		float q1_Index = (total_sn + 1) / 4.0;
-		float q2_Index = (total_sn + 1) / 2.0;
-		float q3_Index = (total_sn + 1) / 4.0 * 3.0;
-
-		//cout << "檢查Q1、Q2、Q3\n";
-		//cout << q1_Index << ", " << q2_Index << ", " << q3_Index << "\n";
-
-		//內插法處理 7.5這種情形 (7+8)/2
-		if ((total_sn + 1) % 4 == 0)
-		{
-			q_Map[g][0] = temp_Range[(int)q1_Index-1];			
-			q_Map[g][2] = temp_Range[(int)q3_Index-1];
-		}
-		else
-		{
-			q_Map[g][0] = (temp_Range[(int)q1_Index-1] + temp_Range[(int)q1_Index])/2;		
-			q_Map[g][2] = (temp_Range[(int)q3_Index-1] + temp_Range[(int)q3_Index])/2;
-		}
-
-		//Q2除以四後還要乘二，獨立處理
-		if ((total_sn + 1) % 2 == 0)
-		{
-			q_Map[g][1] = temp_Range[(int)q2_Index-1];
-		}
-		else
-		{
-			q_Map[g][1] = (temp_Range[(int)q2_Index-1] + temp_Range[(int)q2_Index]) / 2;
-		}
-
-		//cout << "檢查qIndex\n";
-		//cout << (int)q1_Index << ", " << (int)q2_Index << ", " << (int)q3_Index << "\n";
-	}
-
-	delete[] temp_Range;
-
-	/*
-	cout << "檢查q_Map" << "\n";
-	for (int g = 0; g < fn; g++)
-	{
-		cout << q << ": " << q_Map[g][0] << ", " << q_Map[g][1] << ", " << q_Map[g][2] << "\n";
-	}
-	system("pause");
-	*/
-
-	int cn2 = fn*(fn - 1) / 2;		//cn取2
-
-	float *pw = new float[pf_sn];	//正資料權重
-	float *nw = new float[nf_sn];	//负資料權重
+	float *pw = new float[KNN_ForTrainData];	//正資料權重
+	float *nw = new float[KNN_ForTrainData];	//负資料權重
 	float wsum = 0;
 
-	//初使化正负臉權重 個資料權重一開始相同
-
-	for (int i = 0; i < pf_sn; i++)		
-		pw[i] = 1.0 / (total_sn);
-		//pw[i] = 0.5 / pf_sn;
-
-	for (int i = 0; i < nf_sn; i++)
-		nw[i] = 1.0 / (total_sn);
-		//nw[i] = 0.5 / nf_sn;
-
-	for (int i = 0; i < pf_sn; i++)
-		wsum = wsum + pw[i];
-
-	for (int i = 0; i < nf_sn; i++)
-		wsum = wsum + nw[i];
-
-	for (int i = 0; i < pf_sn; i++)
-		pw[i] /= wsum;
-
-	for (int i = 0; i < nf_sn; i++)
+	//初使化正负臉權重 各資料權重一開始相同
+	for (int i = 0; i < KNN_ForTrainData; i++)
 	{
+		pw[i] = 1.0 / (total_sn);
+		nw[i] = 1.0 / (total_sn);
+	}
+	
+	for (int i = 0; i < KNN_ForTrainData; i++)
+	{
+		wsum += pw[i];
+		wsum += nw[i];
+	}
+
+	for (int i = 0; i < KNN_ForTrainData; i++)
+	{
+		pw[i] /= wsum;
 		nw[i] /= wsum;
 	}
 
 	/*
-	cout << "檢查 pw 正資料權重";
-	for (int i = 0; i < pf_sn; i++)
-		cout << pw[i] << ", ";
+		cout << "檢查 pw 正資料權重";
+		for (int i = 0; i < KNN_ForTrainData; i++)
+			cout << pw[i] << ", ";
 
-	cout << "\n";
-	system("pause");
+		cout << "\n";
+		system("pause");
 
-	cout << "檢查 nw 负資料權重";
-	for (int i = 0; i < nf_sn; i++)
-		cout << nw[i] << ", ";
+		cout << "檢查 nw 负資料權重";
+		for (int i = 0; i < KNN_ForTrainData; i++)
+			cout << nw[i] << ", ";
 
-	cout << "總權重 wsum \n";
-	cout << "wsum: " << wsum;
+		cout << "總權重 wsum \n";
+		cout << "wsum: " << wsum;
 
-	system("pause");
+		system("pause");
 	*/
 
-	//float ret[2101][3];
-
 	//OpenCL, 多傳一個List進去吧
-	//int pf_shape[2] = { fn, pf_sn };
-	//int nf_shape[2] = { fn, nf_sn };
 
-	//compute.set_buffer((float *)pf, fn * pf_sn*sizeof(float));
-	//compute.set_buffer((float *)nf, fn * nf_sn*sizeof(float));
+	Compute compute("JointLearn", CL_DEVICE_TYPE_GPU);
+	int pf_shape[2] = { fn, KNN_ForTrainData };
+	int nf_shape[2] = { fn, KNN_ForTrainData };
+	float ret[cn2];
 
-	//compute.set_buffer((float *)pw, pf_sn*sizeof(float));
-	//compute.set_buffer((float *)nw, nf_sn*sizeof(float));
+	compute.set_buffer((float *)pf, fn * KNN_ForTrainData*sizeof(float));
+	compute.set_buffer((float *)nf, fn * KNN_ForTrainData*sizeof(float));
 
-	//compute.set_buffer((int *)pf_shape, 2 * sizeof(int));
-	//compute.set_buffer((int *)nf_shape, 2 * sizeof(int));
+	compute.set_buffer(pw, KNN_ForTrainData * sizeof(float));
+	compute.set_buffer(nw, KNN_ForTrainData * sizeof(float));
+	
+	compute.set_buffer(fn);
+	compute.set_buffer(KNN_ForTrainData);
+	compute.set_buffer(KNN_ForTrainData);
 
-	//compute.set_buffer(1);
+	compute.set_buffer(list, cn2 * 2 * sizeof(int));
+	compute.set_buffer(q_Map, fn * 3 * sizeof(float));
 
-	//compute.set_ret_buffer((float *)ret, fn * 3 * sizeof(float));
-
-
+	compute.set_ret_buffer((float *)ret, cn2 * sizeof(float));
 
 	//做times次的WeakLearner，換句話說，在此之上的程式碼只會執行一次
 	for (int i = 0; i < times; i++)
@@ -502,94 +664,65 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		wsum = 0;
 
 		//調整權重
-		for (int i = 0; i < pf_sn; i++)
-			wsum = wsum + pw[i];
-
-		for (int i = 0; i < nf_sn; i++)
-			wsum = wsum + nw[i];
-
-		for (int i = 0; i < pf_sn; i++)
+		for (int i = 0; i < KNN_ForTrainData; i++)
+		{
+			wsum += pw[i];
+			wsum += nw[i];
+		}
+			
+		for (int i = 0; i < KNN_ForTrainData; i++)
+		{
 			pw[i] /= wsum;
-
-		for (int i = 0; i < nf_sn; i++)
 			nw[i] /= wsum;
-
+		}
+					
 		/*
-		cout << "檢查 pw 正資料權重";
-		for (int i = 0; i < pf_sn; i++)
-		cout << pw[i] << ", ";
+			cout << "檢查 pw 正資料權重";
+			for (int i = 0; i < KNN_ForTrainData; i++)
+				cout << pw[i] << ", ";
 
-		cout << "\n";
-		system("pause");
+			cout << "\n";
+			system("pause");
 
-		cout << "檢查 nw 负資料權重";
-		for (int i = 0; i < nf_sn; i++)
-		cout << nw[i] << ", ";
+			cout << "檢查 nw 负資料權重";
+			for (int i = 0; i < KNN_ForTrainData; i++)
+				cout << nw[i] << ", ";
 
-		cout << "總權重 wsum \n";
-		cout << "wsum: " << wsum;
-		system("pause");
+			cout << "總權重 wsum \n";
+			cout << "wsum: " << wsum;
+			system("pause");
 		*/
 
 		//輸出的陣列 存WeakLearn跑完輸出的各Feature錯誤率 
-		float *err_WeakLearn = new float[cn2];
+		//float *err_WeakLearn = new float[cn2];
 		
 		//每一個資料點的座標 一對一的記錄 所以有正臉數+副臉數
 		//sn_XY會傳入WeakLearn進行計算
-		int **sn_XY = new int*[total_sn];
-		for (int k = 0; k < total_sn; k++)
-			sn_XY[k] = new int[2];
+		//int **sn_XY = new int*[total_sn];
+		//for (int k = 0; k < total_sn; k++)
+		//	sn_XY[k] = new int[2];
 
-		//compute.reset_buffer(2, pw);
-		//compute.reset_buffer(3, nw);
+		//WeakLearn(pf, nf,pw, nw, list, err_WeakLearn, sn_XY);
 
-		//幾個Kernel在跑
-		//compute.run(2101);
-		
-		/*
-			參數說明 正資料pointer, 负資料pointer, 正資料權重, 负資料權重, 正資料個數, 负資料個數,
-			特徵數量, 組合式特徵清單, 回傳陣列, q_Map pointer
-		*/
-		WeakLearn(pf, nf,pw, nw, pf_sn, nf_sn, fn, list, err_WeakLearn, q_Map, sn_XY);
+		compute.run(cn2);
 
-		//float theta = 0; 
-		//float polarity = 1;
 		float error = 1;
 		int selectif = -1;
 		float beta;
 
 		for (int k = 0; k < cn2; k++)
 		{
-			if (err_WeakLearn[k] < error)
+			if (ret[k] < error)
 			{
-				error = err_WeakLearn[k];
+				error = ret[k];
 				selectif = k;
 			}
-
-			cout << "\n";
-			cout << "err_WeakLearn[" << k << "]= " << err_WeakLearn[k];
-			system("pause");
 		}
-
-
-
-		//Rebuild the error map, given k we know features
-
-
-		//if (error > err_WeakLearn[i].final_error)
-		//{
-		//	error = err_WeakLearn[i].final_error;
-		//	polarity = err_WeakLearn[i].polarity;
-		//	theta = err_WeakLearn[i].theta;
-		//	selectif = i;	//最好的那一"行"特徵 (從0開始算，跟Matlab誤差1)
-		//}
-
 
 		//printf("%f, %f, %f, %f\n", err_WeakLearn[i].theta, err_WeakLearn[i].polarity, err_WeakLearn[i].final_error, selectif);
 		
 		//公式可知 beta一定是越來越小
 		beta = error / (1 - error);
-
 
 		//WeakLearn完成後的16宮格
 		float **bestTable = new float*[4];
@@ -605,27 +738,27 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 		//投票瞜
 		for (int g = 0; g < total_sn; g++)
 		{
-			if (g < pf_sn)
-				bestTable[sn_XY[g][0]][sn_XY[g][1]] += pw[g];
+			if (g < KNN_ForTrainData)
+				bestTable[(int)pf[indX][g]][(int)pf[indY][g]] += pw[g];
 			else
-				bestTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g - pf_sn];
+				bestTable[(int)nf[indX][g]][(int)nf[indY][g]] -= nw[g - KNN_ForTrainData];
 		}
 
 		//正臉調權重
-		for (int i = 0; i < pf_sn; i++)
+		for (int i = 0; i < KNN_ForTrainData; i++)
 		{			
-			if (bestTable[sn_XY[i][0]][sn_XY[i][1]] >= 0)
+			if (bestTable[(int)pf[indX][i]][(int)pf[indY][i]] >= 0)
 			{
 				pw[i] = pw[i] * beta;
 			}
 		}
 
 		//負臉調權重
-		for (int i = pf_sn; i < nf_sn+pf_sn; i++)
+		for (int i = KNN_ForTrainData; i < total_sn; i++)
 		{
-			if (bestTable[sn_XY[i][0]][sn_XY[i][1]] < 0)
+			if (bestTable[(int)nf[indX][i]][(int)nf[indY][i]] < 0)
 			{
-				nw[i-pf_sn] = nw[i-pf_sn] * beta;
+				nw[i - KNN_ForTrainData] = nw[i - KNN_ForTrainData] * beta;
 			}
 		}
 
@@ -653,48 +786,34 @@ void AdaBoostTrain(float pf[][15], float nf[][14], int pf_sn, int nf_sn, int fn,
 
 		//printf("i=%d\n", i);
 
-		//F[i][0] = selectif;
-		//F[i][1] = polarity;
-		//F[i][2] = theta;
-		//F[i][3] = log(1 / beta);
-
-		//把alpha值 四捨五入至小數第四位
-		F[i][3] = MyRound(F[i][3]);
-
 		model[i].alpha = log(1.0 / beta);
 
 		//cout << "beta: " << beta << "\n";
 		//cout << "alpha" << log(1.0 / beta) << "\n";
 
-		/*if (i % 100 == 0)*/
-		printf("[%d+%d] , %d, %f\n", list[selectif][0], list[selectif][1], selectif + 1, model[i].alpha);
-		for (int q = 0; q < 4; q++)
-		{
-			//cout << PorN(bestTable[q][0])
-			//	<< "|" << PorN(bestTable[q][1])
-			//	<< "|" << PorN(bestTable[q][2])
-			//	<< "|" << PorN(bestTable[q][3]) << "\n";
-		}
+		//if (i % 50 == 0)
+		//printf("[%d+%d] , %d, %f\n", list[selectif][0], list[selectif][1], selectif + 1, model[i].alpha);
+				
+		//for (int q = 0; q < 4; q++)
+		//{
+		//	cout << PorN(bestTable[q][0])
+		//		<< "|" << PorN(bestTable[q][1])
+		//		<< "|" << PorN(bestTable[q][2])
+		//		<< "|" << PorN(bestTable[q][3]) << "\n";
+		//}
 
 		//釋放記憶體
-		for (int i = 0; i < total_sn; i++)
-			delete[] sn_XY[i];
+		//for (int i = 0; i < total_sn; i++)
+		//	delete[] sn_XY[i];
 
-		delete[] sn_XY;
+		//delete[] sn_XY;
+
+		//compute.reset_buffer(2, pw);
+		//compute.reset_buffer(3, nw);
 	}
-
-
 
 	delete[] pw;
 	delete[] nw;
-}
-
-
-//自製小數點四捨五入至小數第四位
-float MyRound(float number)
-{
-	float f = floor(number * 10000 + 0.5) / 10000;
-	return f;
 }
 
 string PorN(float num)
@@ -705,12 +824,13 @@ string PorN(float num)
 		return "-";
 }
 
-void AdaBoostTest(float data[][5], int data_sn, int fn)
-{
-	int *score = new int[data_sn];
-	float alphaSum = 0;
 
-	for (int i = 0; i < times; i++)
+void AdaBoostTest(float data_Fe[], float data_Re[])
+{
+	float alphaSum = 0;
+	float score = 0;
+	
+	for (size_t i = 0; i < times; i++)
 	{
 		alphaSum += model[i].alpha;
 
@@ -718,37 +838,75 @@ void AdaBoostTest(float data[][5], int data_sn, int fn)
 		int y = model[i].y;
 
 		//sn_XY會傳入WeakLearn進行計算
-		int **test_XY = new int*[data_sn];
-		for (int k = 0; k < data_sn; k++)
-			test_XY[k] = new int[2];
+		int test_XY[2];
 
-		for (int j = 0; j < data_sn; j++)
-		{
-			if (data[x][j] < q_Map[x][0])
-				test_XY[j][0] = 0;
-			else if (data[x][j] < q_Map[x][1])
-				test_XY[j][0] = 1;
-			else if (data[x][j] < q_Map[x][2])
-				test_XY[j][0] = 2;
-			else
-				test_XY[j][0] = 3;
+		if (data_Fe[x] < q_Map[x][0])
+			test_XY[0] = 0;
+		else if (data_Fe[x] < q_Map[x][1])
+			test_XY[0] = 1;
+		else if (data_Fe[x] < q_Map[x][2])
+			test_XY[0] = 2;
+		else
+			test_XY[0] = 3;
 
-			if (data[y][j] < q_Map[y][0])
-				test_XY[j][1] = 0;
-			else if (data[y][j] < q_Map[y][1])
-				test_XY[j][1] = 1;
-			else if (data[y][j] < q_Map[y][2])
-				test_XY[j][1] = 2;
-			else
-				test_XY[j][1] = 3;
+		if (data_Fe[y] < q_Map[y][0])
+			test_XY[1] = 0;
+		else if (data_Fe[y] < q_Map[y][1])
+			test_XY[1] = 1;
+		else if (data_Fe[y] < q_Map[y][2])
+			test_XY[1] = 2;
+		else
+			test_XY[1] = 3;
 
-			if (model[i].bestTable[test_XY[j][0]][test_XY[j][1]] >= 0)
-				score[j] += model[i].alpha;
-		}
+		//cout << "BestTable:" << i << " " <<model[i].bestTable[test_XY[0]][test_XY[1]] << "\n";
+
+		if (model[i].bestTable[test_XY[0]][test_XY[1]] >= 0)
+			score += model[i].alpha;
 	}
 
-	cout << "\nalphaSum: " << alphaSum << "\n";
-	system("pause");
+	float finalDecision = score / alphaSum;
+	//cout << "score= " << score << " alphaSum= " << alphaSum << " Final Decision" << finalDecision <<"\n";
+
+	//看多
+	if (finalDecision >= 0.5)
+	{
+		if (data_Re[3] >= 0)
+		{
+			success_Count++;
+			total_Profit += abs(data_Re[3]);
+		}
+		else
+		{
+			total_Profit -= abs(data_Re[3]);
+			fail_Count++;
+		}
+
+		file_Output << finalDecision << "," << data_Re[3] << ",\n";
+	}
+	//看空
+	else
+	{
+		if (data_Re[3] < 0)
+		{
+			success_Count++;
+			total_Profit += abs(data_Re[3]);
+		}
+		else
+		{
+			total_Profit -= abs(data_Re[3]);
+			fail_Count++;
+		}
+
+		file_Output << finalDecision << "," << -data_Re[3] << ",\n";
+	}
+
+	total_Count++;
+
+	//cout << "\nsocre= " << score;
+	//cout << "\nalphaSum = " << alphaSum;
+	cout << "\nfinalDecision= " << finalDecision;
+	cout << "\n總獲利= " << total_Profit;
+	cout << "\n勝率= " << success_Count / total_Count;
 
 	//float *predit = new float[data_sn];
 	//int count = 0;
@@ -786,12 +944,12 @@ void AdaBoostTest(float data[][5], int data_sn, int fn)
 參數說明 正資料pointer, 负資料pointer, 正資料權重, 负資料權重,
 			正資料個數, 负資料個數, 特徵數量, 組合式特徵清單, 回傳陣列, q_Map pointer 
 */
-void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[], 
-	int pf_sn, int nf_sn, int fn, int list[][2], float* return_Matrix, float** q_Map, int** sn_XY)
-{
+void WeakLearn(float pf[][5000], float nf[][5000], float pw[], float nw[], 
+				int list[][2], float* return_Matrix, int** sn_XY)
+{	
 	/*
 	cout << "檢查 pw 正資料權重:";
-	for (int i = 0; i < pf_sn; i++)
+	for (int i = 0; i < KNN_ForTrainData; i++)
 	{
 		cout << pw[i] << ", ";
 	}
@@ -799,7 +957,7 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 	system("pause");
 
 	cout << "檢查 nw 负資料權重:";
-	for (int i = 0; i < nf_sn; i++)
+	for (int i = 0; i < KNN_ForTrainData; i++)
 	{
 		cout << nw[i] << ", ";
 	}
@@ -808,21 +966,9 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 	system("pause");
 	*/
 
-	int total_sn = pf_sn + nf_sn;		//總資料個數 = 正資料+负資料
-	int cn2 = fn*(fn - 1) / 2;			//CN取2個特徵
-
 	//h(header)控制最外層的迴圈
 	for (int h = 0; h < cn2; ++h)
 	{	
-		/*  
-			list[][] C3取2 示意圖
-
-			 X  Y
-			[0][1]
-			[0][2]
-			[1][2]
-		*/
-
 		int adaboost_XAxis = list[h][0];	//JointAdaboost 16宮格之X軸 代表第幾個Feature ex: 0 => RSI
 		int adaboost_YAxis = list[h][1];	//JointAdaboost 16宮格之Y軸 代表第幾個Feature ex: 1 => KD
 
@@ -843,7 +989,7 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		//float max = , min = 20000000000000, error = 1, theta = 0, polarity = 1;
 		
 		//正資料裡面 找最大 最小值
-		for (int i = 0; i < pf_sn; i++)
+		for (int i = 0; i < KNN_ForTrainData; i++)
 		{
 			if (pf_X[i] > max_X)
 			{
@@ -865,7 +1011,7 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		}
 
 		//负資料 接續剛剛正資料 繼續找最大最小值
-		for (int i = 0; i < nf_sn; i++)
+		for (int i = 0; i < KNN_ForTrainData; i++)
 		{
 			if (nf_X[i] > max_X)
 			{
@@ -896,7 +1042,7 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		float seatTable_PN[4][4][2] = { { { 0, 0}, { 0, 0}, { 0, 0}, { 0, 0} },
 										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
 										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
-										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } }, };
+										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } } };
 
 
 		/*	
@@ -911,7 +1057,7 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		*/
 
 		//先把正資料 丟到16宮格 看看座落於哪個座標
-		for (int z = 0; z < pf_sn; z++)
+		for (int z = 0; z < KNN_ForTrainData; z++)
 		{		
 			if (pf_X[z] < q_Map[adaboost_XAxis][0])
 				sn_XY[z][0] = 0;
@@ -933,27 +1079,27 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		}
 
 		//接著把负資料也丟入16宮格 找出座標
-		for (int z = pf_sn; z < total_sn; z++)
+		for (int z = KNN_ForTrainData; z < total_sn; z++)
 		{
-			if (nf_X[z - pf_sn] < q_Map[adaboost_XAxis][0])
+			if (nf_X[z - KNN_ForTrainData] < q_Map[adaboost_XAxis][0])
 				sn_XY[z][0] = 0;
-			else if (nf_X[z - pf_sn] < q_Map[adaboost_XAxis][1])
+			else if (nf_X[z - KNN_ForTrainData] < q_Map[adaboost_XAxis][1])
 				sn_XY[z][0] = 1;
-			else if (nf_X[z - pf_sn] < q_Map[adaboost_XAxis][2])
+			else if (nf_X[z - KNN_ForTrainData] < q_Map[adaboost_XAxis][2])
 				sn_XY[z][0] = 2;
 			else
 				sn_XY[z][0] = 3;
 
-			if (nf_Y[z - pf_sn] < q_Map[adaboost_YAxis][0])
+			if (nf_Y[z - KNN_ForTrainData] < q_Map[adaboost_YAxis][0])
 				sn_XY[z][1] = 0;
-			else if (nf_Y[z - pf_sn] < q_Map[adaboost_YAxis][1])
+			else if (nf_Y[z - KNN_ForTrainData] < q_Map[adaboost_YAxis][1])
 				sn_XY[z][1] = 1;
-			else if (nf_Y[z - pf_sn] < q_Map[adaboost_YAxis][2])
+			else if (nf_Y[z - KNN_ForTrainData] < q_Map[adaboost_YAxis][2])
 				sn_XY[z][1] = 2;
 			else
 				sn_XY[z][1] = 3;
 
-			//cout << "nf_X: " << nf_X[z - pf_sn] <<", nf_Y: " << nf_Y[z - pf_sn] << "\n";
+			//cout << "nf_X: " << nf_X[z - KNN_ForTrainData] <<", nf_Y: " << nf_Y[z - KNN_ForTrainData] << "\n";
 			//system("pause");
 		}
 
@@ -966,15 +1112,15 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		for (int x = 0; x < total_sn; x++)
 			cout << sn_XY[x][0] << sn_XY[x][1] << "\n";
 		system("pause");
-
+		
 		cout << "pw\n";
-		for (int j = 0; j < pf_sn; j++)
+		for (int j = 0; j < KNN_ForTrainData; j++)
 			cout << pw[j] << ", ";
 
 		cout << "\n";
 
 		cout << "nw\n";
-		for (int j = 0; j < nf_sn; j++)
+		for (int j = 0; j < KNN_ForTrainData; j++)
 			cout << nw[j] << ", ";
 
 		system("pause");
@@ -985,21 +1131,22 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		//有了每個資料點所在的XY座標 就可以進行投票(加減權重)
 		for (int g = 0; g < total_sn; g++)
 		{
-			if (g < pf_sn)
+			if (g < KNN_ForTrainData)
 			{
 				seatTable[sn_XY[g][0]][sn_XY[g][1]] += pw[g];		//直接就是存每一格總結果
 				seatTable_PN[sn_XY[g][0]][sn_XY[g][1]][0] += pw[g]; //統記每一格的正權重
 				//return_Matrix[h] += pw[g];
 			}
-				
 			else
 			{
-				seatTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g - pf_sn];			//直接就是存每一格總結果
-				seatTable_PN[sn_XY[g][0]][sn_XY[g][1]][1] += nw[g - pf_sn];		//統記每一格的负權重(正值)
+				seatTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g - KNN_ForTrainData];			//直接就是存每一格總結果
+				seatTable_PN[sn_XY[g][0]][sn_XY[g][1]][1] += nw[g - KNN_ForTrainData];		//統記每一格的负權重(正值)
 				//return_Matrix[h] -= nw[g - pf_sn];
 			}
 
-			//cout << "[" << sn_XY[g][0] << "]["<< sn_XY[g][1] << "] value=" << seatTable[sn_XY[g][0]][sn_XY[g][1]] << "\n";
+			/*cout << "[" << sn_XY[g][0] << "]["<< sn_XY[g][1] << "] value=" << seatTable[sn_XY[g][0]][sn_XY[g][1]] 
+			 << "\n";*/
+			//cout << seatTable_PN[1][3][0] << "," << seatTable_PN[1][3][1] << endl;
 			//system("pause");
 		}
 
@@ -1021,19 +1168,19 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 				//相等時，預設被當成正的，负的被當成ERROR
 				else
 				{
-					return_Matrix[h] += seatTable_PN[x][y][1];;
+					return_Matrix[h] += seatTable_PN[x][y][1];
 				}
-				
+				//cout << return_Matrix[h] << "|" << seatTable_PN[x][y][0] << " vs " << seatTable_PN[x][y][1] << endl;
 			}
 
 			//cout << "[" << sn_XY[x][0] << "]["<< sn_XY[x][1] << "] value=" << seatTable[sn_XY[x][0]][sn_XY[x][1]] << "\n";
 			//system("pause");
 		}
 
+		//cout << seatTable_PN[1][3][1] << "," << seatTable_PN[1][3][1] << endl;
+			
 
-
-
-		
+	
 		//printf("[%d+%d]\n", adaboost_XAxis, adaboost_YAxis);
 		//for (int q = 3; q >= 0; q--)
 		//{
@@ -1052,64 +1199,125 @@ void WeakLearn(float pf[][15], float nf[][14], float pw[], float nw[],
 		system("pause");
 		*/
 
+	}
+}
 
-		//找最好的一刀
-		//for (int j = 1; j < 10; j++)
-		//{
-		//	float theta1 = (max - min) / 10 * j;
-		//	float error1 = 0;
-		//	float polarity1 = 1;
-		//	for (int i = 0; i < pf_sn; i++)
-		//	{
-		//		if (pf[i] < theta1)
-		//		{
-		//			error1 = error1 + pw[i];
-		//		}
-		//	}
-		//	for (int i = 0; i < nf_sn; i++)
-		//	{
-		//		if (nf[i] > theta1)
-		//		{
-		//			error1 = error1 + nw[i];
-		//		}
-		//	}
-		//	if (error1 > 0.5)
-		//	{
-		//		polarity1 = -1;
-		//		error1 = 1 - error1;
-		//	}
-		//	if (error1 < error)
-		//	{
-		//		error = error1;
-		//		polarity = polarity1;
-		//		theta = theta1;
-		//	}
-		//}
-		//float err_WeakLearn[] = { error, polarity, theta };
-		//return err_WeakLearn;
+//根據原始資料 尋找相似的10,000筆資料出來建模 (正負資料各五千)
+//傳入的資料結構 列=Feature, 欄=分鐘資料
+void KNN_Search(float test_Re[], ReturnPair pair_PF[], ReturnPair pair_NF[],
+	float arr_Fe_PF[][233590], float arr_Fe_NF[][221629], float arr_Re_PF[][233590], float arr_Re_NF[][221629],
+	float real_Fe_PF[][5000], float real_Fe_NF[][5000], float real_Re_PF[][5000], float real_Re_NF[][5000])
+{
+	// p means previous, t means target, 測試的這一分鐘之四個Return宣告如下
+	float return_p10 = test_Re[0];
+	float return_p5 = test_Re[1];
+	float return_p1 = test_Re[2];
+	float return_t30 = test_Re[3];
 
-		//cout << "pwpwpwpwpwpwp,,,,";
-		//for (int i = 0; i < pf_sn; i++)
-		//{
-		//	cout << pw[i] << ", ";
-		//}
+	////cout << "\n" << return_p10 << ", " << return_p5 << ", " << return_p1 << ", " << return_t30 << "\n";
+	////system("pause");
 
-		//cout << "\n";
+	int zero = 0;
+
+	//從所有歷史資料中，根據現在Testing這筆資料之報酬率，計算距離總合與我最近的(最像的)
+	for (size_t i = 0; i < Train_PF_Num; i++)
+	{
+		pair_PF[i].previous_R_Sum = abs(return_p10 - arr_Re_PF[0][i])
+			+ abs(return_p5 - arr_Re_PF[1][i])
+			+ abs(return_p1 - arr_Re_PF[2][i]);
+		pair_PF[i].target_R = arr_Re_PF[3][i];
+		pair_PF[i].pf_Index = i;
+
+		//cout << pair_PF[i].previous_R_Sum << "\n";
+		//cout << pair_PF[i].target_R << "\n";
 		//system("pause");
-
-		//cout << "nwnwnw,,,,";
-		//for (int i = 0; i < nf_sn; i++)
-		//{
-		//	cout << nw[i] << ", ";
-		//}
-
-		//cout << "\n\n";
-		//system("pause");
-
 	}
 
+	//從所有歷史資料中，根據現在Testing這筆資料之報酬率，計算距離總合與我最近的(最像的)
+	for (size_t j = 0; j < Train_NF_Num; j++)
+	{
+		pair_NF[j].previous_R_Sum = abs(return_p10 - arr_Re_NF[0][j])
+			+ abs(return_p5 - arr_Re_NF[1][j])
+			+ abs(return_p1 - arr_Re_NF[2][j]);
 
+		pair_NF[j].target_R = arr_Re_NF[3][j];
+		pair_NF[j].nf_Index = j;
+	}
 
+	//檢查排序前的內容內容
+	//cout << "UnSorted: " << "\n";
+	//for (size_t i = 0; i < 30000; i++)
+	//	cout << pair_PF[i].previous_R_Sum << "\n";
+
+	//自定義排序方法
+	sort(pair_PF, pair_PF + Train_PF_Num, CompareR);
+	sort(pair_NF, pair_NF + Train_NF_Num, CompareR);
+
+	//排序後 就可以抓出正負最像的那五千筆
+	for (size_t i = 0; i < KNN_ForTrainData; i++)
+	{
+		int pf_Idx = pair_PF[i].pf_Index;
+		int nf_Idx = pair_NF[i].nf_Index;
+
+		//cout << "Feature PF NF \n";
+
+		//找出相對應的特徵
+		for (size_t f = 0; f < fn; f++)
+		{
+			real_Fe_PF[f][i] = arr_Fe_PF[f][pf_Idx];
+			real_Fe_NF[f][i] = arr_Fe_NF[f][nf_Idx];
+
+			//cout << real_Fe_PF[f][i] << "\n";
+			//cout << real_Fe_NF[f][i] << "\n";
+		}
+
+		//cout << "Return PF NF \n";
+
+		//找出相對應的報酬率
+		for (size_t r = 0; r < rn; r++)
+		{
+			real_Re_PF[r][i] = arr_Re_PF[r][pf_Idx];
+			real_Re_NF[r][i] = arr_Re_NF[r][nf_Idx];
+
+			//cout << real_Re_PF[r][i] << "\n";
+			//cout << real_Re_NF[r][i] << "\n";
+		}
+
+		//cout << "PF\n";
+		//cout << "Distance Sum " << pair_PF[i].previous_R_Sum << "\n";
+		//cout << "Target " << pair_PF[i].target_R << "\n";
+		//cout << "Index " << pair_PF[i].pf_Index << "\n";
+
+		//cout << "NF\n";
+		//cout << "Distance Sum " << pair_NF[i].previous_R_Sum << "\n";
+		//cout << "Target " << pair_NF[i].target_R << "\n";
+		//cout << "Index " << pair_NF[i].nf_Index << "\n";
+
+		//if (i % 100 == 0)
+		//	system("pause");
+
+		//if (pair_PF[i].previous_R_Sum == 0)
+		//{
+		//	cout << " =0 " << "\n";
+		//}
+		//else if (pair_PF[i].previous_R_Sum < 0)
+		//{
+		//	cout << " <0 " << "\n";
+		//}
+		//else
+		//{
+		//	cout << " >0 " << "\n";
+		//}
+
+		//printf("%f", pair_PF[i].previous_R_Sum);
+		//system("pause");
+	}
+	//system("pause");
+}
+
+bool CompareR(ReturnPair r1, ReturnPair r2)
+{
+	return r1.previous_R_Sum < r2.previous_R_Sum;
 }
 
 
