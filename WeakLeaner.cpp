@@ -23,6 +23,7 @@ struct Model
 			{
 				delete[] bestTable[i];
 			}
+			delete[] bestTable;
 		}
 };
 
@@ -36,9 +37,8 @@ class ReturnPair
 };
 
 bool CompareR(ReturnPair, ReturnPair);
-void WeakLearn(float[][5000], float[][5000], float[], float[], int[][2], float*, int**);
-void AdaBoostTrain(float[][5000], float[][5000], int [][2]);
-void AdaBoostTest(float data_Fe[], float data_Re[]);
+void AdaBoostTrain(float[][5000], float[][5000], int [][2], float**);
+void AdaBoostTest(float data_Fe[], float data_Re[], float**);
 
 void KNN_Search(float test_Re[], ReturnPair pair_PF[], ReturnPair pair_NF[],
 	float arr_Fe_PF[][233590], float arr_Fe_NF[][221629], float arr_Re_PF[][233590], float arr_Re_NF[][221629],
@@ -46,7 +46,7 @@ void KNN_Search(float test_Re[], ReturnPair pair_PF[], ReturnPair pair_NF[],
 
 string PorN(float);
 
-const int times = 10;	//訓練次數
+const int times = 50;	//訓練次數
 const int Train_PF_Num = 233590;  // positive number Traing Data
 const int Train_NF_Num = 221629;  // negative number Traing Data
 const int KNN_ForTrainData = 5000; //例如:KNN找出一萬筆 正負訓練資料各五千
@@ -67,7 +67,6 @@ fstream file_Output;
 
 //最終的模型(times張表)
 Model* model;
-float **q_Map;
 
 //總資料個數total_SampleNumber
 int total_sn = KNN_ForTrainData*2;
@@ -408,6 +407,13 @@ int main()
 		}
 	*/
 
+
+	float **q_Map;
+	//四分位數的Map 二維陣列
+	q_Map = new float*[fn];
+	for (int x = 0; x < fn; x++)
+		q_Map[x] = new float[3];
+
 	//看有Testing Data有幾筆分鐘資料 就訓練幾次Model
 	for (size_t i = 0; i < Test_PF_Num + Test_NF_Num; i++)
 	{
@@ -443,10 +449,7 @@ int main()
 			arr_Train_Fe_PF, arr_Train_Fe_NF, arr_Train_Re_PF, arr_Train_Re_NF,
 			real_Train_Fe_PF, real_Train_Fe_NF, real_Train_Re_PF, real_Train_Re_NF);
 
-		//四分位數的Map 二維陣列
-		q_Map = new float*[fn];
-		for (int x = 0; x < fn; x++)
-			q_Map[x] = new float[3];
+
 
 		/*
 		q_Map示意圖
@@ -561,23 +564,26 @@ int main()
 
 		clock_t train_beginTime = clock();
 		//參數說明: 正資料pointer, 负資料pointer, 正資料sample數, 负資料sample數, 特徵數量, 訓練次數, CN取2的清單pointer
-		AdaBoostTrain(real_Train_Fe_PF, real_Train_Fe_NF, list);
+		AdaBoostTrain(real_Train_Fe_PF, real_Train_Fe_NF, list, q_Map);
 		clock_t train_endTime = clock();
 		double train_Sec = double(train_endTime - train_beginTime) / CLOCKS_PER_SEC;
 		cout << "Adaboost Train: " << train_Sec << " seconds!!!!" << endl;
 
-		AdaBoostTest(feature_Test, return_Test);
+		AdaBoostTest(feature_Test, return_Test, q_Map);
 
 		//釋放記憶體
 		delete[] return_Test;
 		delete[] feature_Test;
 	
-		for (int x = 0; x < fn; x++)
-		{
-			delete[] q_Map[x];
-		}
-		delete[] q_Map;
+
 	}
+
+
+	for (int x = 0; x < fn; x++)
+	{
+		delete[] q_Map[x];
+	}
+	delete[] q_Map;
 
 	delete[] model;
 
@@ -593,7 +599,7 @@ int main()
 }
 
 //參數說明: 正資料pointer, 负資料pointer, 正資料sample數, 负資料sample數, 特徵數量, 訓練次數, CN取2的清單pointer
-void AdaBoostTrain(float pf[][5000], float nf[][5000], int list[][2])
+void AdaBoostTrain(float pf[][5000], float nf[][5000], int list[][2], float** q_Map)
 {
 	float *pw = new float[KNN_ForTrainData];	//正資料權重
 	float *nw = new float[KNN_ForTrainData];	//负資料權重
@@ -653,8 +659,8 @@ void AdaBoostTrain(float pf[][5000], float nf[][5000], int list[][2])
 	compute.set_buffer(KNN_ForTrainData);
 	compute.set_buffer(KNN_ForTrainData);
 
-	compute.set_buffer(list, cn2 * 2 * sizeof(int));
-	compute.set_buffer(q_Map, fn * 3 * sizeof(float));
+	compute.set_buffer((float *)list, cn2 * 2 * sizeof(int));
+	compute.set_buffer((float *)q_Map, fn * 3 * sizeof(float));
 
 	compute.set_ret_buffer((float *)ret, cn2 * sizeof(float));
 
@@ -704,6 +710,8 @@ void AdaBoostTrain(float pf[][5000], float nf[][5000], int list[][2])
 
 		//WeakLearn(pf, nf,pw, nw, list, err_WeakLearn, sn_XY);
 
+		compute.reset_buffer(2, pw);
+		compute.reset_buffer(3, nw);
 		compute.run(cn2);
 
 		float error = 1;
@@ -825,7 +833,7 @@ string PorN(float num)
 }
 
 
-void AdaBoostTest(float data_Fe[], float data_Re[])
+void AdaBoostTest(float data_Fe[], float data_Re[], float** q_Map)
 {
 	float alphaSum = 0;
 	float score = 0;
@@ -938,268 +946,6 @@ void AdaBoostTest(float data_Fe[], float data_Re[])
 	//	}
 	//}
 	//return count;
-}
-
-/*
-參數說明 正資料pointer, 负資料pointer, 正資料權重, 负資料權重,
-			正資料個數, 负資料個數, 特徵數量, 組合式特徵清單, 回傳陣列, q_Map pointer 
-*/
-void WeakLearn(float pf[][5000], float nf[][5000], float pw[], float nw[], 
-				int list[][2], float* return_Matrix, int** sn_XY)
-{	
-	/*
-	cout << "檢查 pw 正資料權重:";
-	for (int i = 0; i < KNN_ForTrainData; i++)
-	{
-		cout << pw[i] << ", ";
-	}
-	cout << "\n";
-	system("pause");
-
-	cout << "檢查 nw 负資料權重:";
-	for (int i = 0; i < KNN_ForTrainData; i++)
-	{
-		cout << nw[i] << ", ";
-	}
-
-	cout << "\n";
-	system("pause");
-	*/
-
-	//h(header)控制最外層的迴圈
-	for (int h = 0; h < cn2; ++h)
-	{	
-		int adaboost_XAxis = list[h][0];	//JointAdaboost 16宮格之X軸 代表第幾個Feature ex: 0 => RSI
-		int adaboost_YAxis = list[h][1];	//JointAdaboost 16宮格之Y軸 代表第幾個Feature ex: 1 => KD
-
-		//根據座標決定取出pf的某整條特徵 進行Joint	
-		float* pf_X = pf[adaboost_XAxis];
-		float* pf_Y = pf[adaboost_YAxis];
-		
-		//根據座標決定取出nf的某整條特徵 進行Joint	
-		float* nf_X = nf[adaboost_XAxis];
-		float* nf_Y = nf[adaboost_YAxis];
-		
-		//16宮格 兩軸都混合正负資料 取出最大最小
-		float min_X = pf_X[0];
-		float max_X = pf_X[0];
-		float min_Y = pf_Y[0];
-		float max_Y = pf_Y[0];
-
-		//float max = , min = 20000000000000, error = 1, theta = 0, polarity = 1;
-		
-		//正資料裡面 找最大 最小值
-		for (int i = 0; i < KNN_ForTrainData; i++)
-		{
-			if (pf_X[i] > max_X)
-			{
-				max_X = pf_X[i];
-			}
-			if (pf_X[i] < min_X)
-			{
-				min_X = pf_X[i];
-			}
-
-			if (pf_Y[i] > max_Y)
-			{
-				max_Y = pf_Y[i];
-			}
-			if (pf_Y[i] < min_Y)
-			{
-				min_Y = pf_Y[i];
-			}
-		}
-
-		//负資料 接續剛剛正資料 繼續找最大最小值
-		for (int i = 0; i < KNN_ForTrainData; i++)
-		{
-			if (nf_X[i] > max_X)
-			{
-				max_X = nf_X[i];
-			}
-			if (nf_X[i] < min_X)
-			{
-				min_X = nf_X[i];
-			}
-
-			if (nf_Y[i] > max_Y)
-			{
-				max_Y = nf_Y[i];
-			}
-			if (nf_Y[i] < min_Y)
-			{
-				min_Y = nf_Y[i];
-			}
-		}
-
-		//seatTable計票用的16宮格!!!!
-		float seatTable[4][4] = { { 0, 0, 0, 0 },
-									{ 0, 0, 0, 0 }, 
-									{ 0, 0, 0, 0 }, 
-									{ 0, 0, 0, 0 }};
-
-		//seatTable16宮格延伸兩個屬性去紀錄 +-總合 (P=Postive, N=Negative)
-		float seatTable_PN[4][4][2] = { { { 0, 0}, { 0, 0}, { 0, 0}, { 0, 0} },
-										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
-										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
-										{ { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } } };
-
-
-		/*	
-				SampleNumber_XY 對每筆資料選出最好的XY值
-						X	Y
-				1		   
-				2		   
-				.
-				.
-				.
-		   pf_sn+fn_sn
-		*/
-
-		//先把正資料 丟到16宮格 看看座落於哪個座標
-		for (int z = 0; z < KNN_ForTrainData; z++)
-		{		
-			if (pf_X[z] < q_Map[adaboost_XAxis][0])
-				sn_XY[z][0] = 0;
-			else if (pf_X[z] < q_Map[adaboost_XAxis][1])
-				sn_XY[z][0] = 1;
-			else if (pf_X[z] < q_Map[adaboost_XAxis][2])
-				sn_XY[z][0] = 2;
-			else
-				sn_XY[z][0] = 3;
-
-			if (pf_Y[z] < q_Map[adaboost_YAxis][0])
-				sn_XY[z][1] = 0;
-			else if (pf_Y[z] < q_Map[adaboost_YAxis][1])
-				sn_XY[z][1] = 1;
-			else if (pf_Y[z] < q_Map[adaboost_YAxis][2])
-				sn_XY[z][1] = 2;
-			else
-				sn_XY[z][1] = 3;
-		}
-
-		//接著把负資料也丟入16宮格 找出座標
-		for (int z = KNN_ForTrainData; z < total_sn; z++)
-		{
-			if (nf_X[z - KNN_ForTrainData] < q_Map[adaboost_XAxis][0])
-				sn_XY[z][0] = 0;
-			else if (nf_X[z - KNN_ForTrainData] < q_Map[adaboost_XAxis][1])
-				sn_XY[z][0] = 1;
-			else if (nf_X[z - KNN_ForTrainData] < q_Map[adaboost_XAxis][2])
-				sn_XY[z][0] = 2;
-			else
-				sn_XY[z][0] = 3;
-
-			if (nf_Y[z - KNN_ForTrainData] < q_Map[adaboost_YAxis][0])
-				sn_XY[z][1] = 0;
-			else if (nf_Y[z - KNN_ForTrainData] < q_Map[adaboost_YAxis][1])
-				sn_XY[z][1] = 1;
-			else if (nf_Y[z - KNN_ForTrainData] < q_Map[adaboost_YAxis][2])
-				sn_XY[z][1] = 2;
-			else
-				sn_XY[z][1] = 3;
-
-			//cout << "nf_X: " << nf_X[z - KNN_ForTrainData] <<", nf_Y: " << nf_Y[z - KNN_ForTrainData] << "\n";
-			//system("pause");
-		}
-
-		/*
-		cout << "q_Map" << "\n";
-		for (int x = 0; x < fn; x++)
-			cout << q_Map[x][0] << ", " << q_Map[x][1] << ", " << q_Map[x][2] << "\n";
-
-		cout << "sn_XY[][0] sn_XY[][0]";
-		for (int x = 0; x < total_sn; x++)
-			cout << sn_XY[x][0] << sn_XY[x][1] << "\n";
-		system("pause");
-		
-		cout << "pw\n";
-		for (int j = 0; j < KNN_ForTrainData; j++)
-			cout << pw[j] << ", ";
-
-		cout << "\n";
-
-		cout << "nw\n";
-		for (int j = 0; j < KNN_ForTrainData; j++)
-			cout << nw[j] << ", ";
-
-		system("pause");
-		*/
-
-		return_Matrix[h] = 0;
-
-		//有了每個資料點所在的XY座標 就可以進行投票(加減權重)
-		for (int g = 0; g < total_sn; g++)
-		{
-			if (g < KNN_ForTrainData)
-			{
-				seatTable[sn_XY[g][0]][sn_XY[g][1]] += pw[g];		//直接就是存每一格總結果
-				seatTable_PN[sn_XY[g][0]][sn_XY[g][1]][0] += pw[g]; //統記每一格的正權重
-				//return_Matrix[h] += pw[g];
-			}
-			else
-			{
-				seatTable[sn_XY[g][0]][sn_XY[g][1]] -= nw[g - KNN_ForTrainData];			//直接就是存每一格總結果
-				seatTable_PN[sn_XY[g][0]][sn_XY[g][1]][1] += nw[g - KNN_ForTrainData];		//統記每一格的负權重(正值)
-				//return_Matrix[h] -= nw[g - pf_sn];
-			}
-
-			/*cout << "[" << sn_XY[g][0] << "]["<< sn_XY[g][1] << "] value=" << seatTable[sn_XY[g][0]][sn_XY[g][1]] 
-			 << "\n";*/
-			//cout << seatTable_PN[1][3][0] << "," << seatTable_PN[1][3][1] << endl;
-			//system("pause");
-		}
-
-		//有了每個資料點所在的XY座標 就可以進行投票(加減權重)
-		for (int x = 0; x < 4; x++)
-		{
-			for (int y = 0; y < 4; y++)
-			{
-				//正權重總合 >= 负權重總合 代表负的錯了
-				if (seatTable_PN[x][y][0] > seatTable_PN[x][y][1])
-				{
-					return_Matrix[h] += seatTable_PN[x][y][1];
-				}
-				//正權重總合 < 负權重總合 代表正的錯了
-				else if (seatTable_PN[x][y][0] < seatTable_PN[x][y][1])
-				{
-					return_Matrix[h] += seatTable_PN[x][y][0];
-				}
-				//相等時，預設被當成正的，负的被當成ERROR
-				else
-				{
-					return_Matrix[h] += seatTable_PN[x][y][1];
-				}
-				//cout << return_Matrix[h] << "|" << seatTable_PN[x][y][0] << " vs " << seatTable_PN[x][y][1] << endl;
-			}
-
-			//cout << "[" << sn_XY[x][0] << "]["<< sn_XY[x][1] << "] value=" << seatTable[sn_XY[x][0]][sn_XY[x][1]] << "\n";
-			//system("pause");
-		}
-
-		//cout << seatTable_PN[1][3][1] << "," << seatTable_PN[1][3][1] << endl;
-			
-
-	
-		//printf("[%d+%d]\n", adaboost_XAxis, adaboost_YAxis);
-		//for (int q = 3; q >= 0; q--)
-		//{
-		//	cout << PorN(seatTable[0][q])
-		//		<< "|" << PorN(seatTable[1][q])
-		//		<< "|" << PorN(seatTable[2][q])
-		//		<< "|" << PorN(seatTable[3][q]) << "\n";
-		//}
-		//system("pause");
-
-		/*
-		for (int j = 0; j < 4; j++)
-			cout << seatTable[j][0] << ", " << seatTable[j][1] << ", " << seatTable[j][2] << ", " << seatTable[j][3] << "\n";
-
-		cout << "\nh=" << h << ", returen_Matrix=" << return_Matrix[h];
-		system("pause");
-		*/
-
-	}
 }
 
 //根據原始資料 尋找相似的10,000筆資料出來建模 (正負資料各五千)

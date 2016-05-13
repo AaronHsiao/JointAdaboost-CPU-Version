@@ -5,7 +5,7 @@
 #include <fstream>
 
 #ifndef DEBUG
-#define DEBUG false
+#define DEBUG true
 #endif
 
 #ifndef COMPUTE_HPP  // include guard
