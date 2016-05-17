@@ -6,6 +6,8 @@
 #include <ctime>
 #include <algorithm>
 
+#include <windows.h>
+
 #include "compute.hpp"
 using namespace std;
 
@@ -46,7 +48,7 @@ void KNN_Search(float test_Re[], ReturnPair pair_PF[], ReturnPair pair_NF[],
 
 string PorN(float);
 
-const int times = 50;	//訓練次數
+const int times = 200;	//訓練次數
 const int Train_PF_Num = 233590;  // positive number Traing Data
 const int Train_NF_Num = 221629;  // negative number Traing Data
 const int KNN_ForTrainData = 5000; //例如:KNN找出一萬筆 正負訓練資料各五千
@@ -92,7 +94,7 @@ int main()
 	//char file_Test_Fe_NF[] = "G:\\2013_F_Test_NF.txt";	   //18219*162
 
 	//輸出檔案
-	char file_Result[] = "JointAdaboost_GPU_30分鐘_5000knn_訓練3次.csv";
+	char file_Result[] = "JointAdaboost_GPU_30分鐘_5000knn_訓練200次.csv";
 	file_Output.open(file_Result, ios::out);//開啟檔案
 	if (!file_Output){//如果開啟檔案失敗，file_Output為0；成功，file_Output為非0
 		cout << "Fail to open file: " << file_Result << endl;
@@ -417,6 +419,8 @@ int main()
 	//看有Testing Data有幾筆分鐘資料 就訓練幾次Model
 	for (size_t i = 0; i < Test_PF_Num + Test_NF_Num; i++)
 	{
+		cout << "\ni= " << i << "\n";
+
 		auto return_Test = new float[rn];
 		auto feature_Test = new float[fn];
 
@@ -575,9 +579,17 @@ int main()
 		delete[] return_Test;
 		delete[] feature_Test;
 	
-
 	}
 
+	file_Output << "成功數," << success_Count << ",\n";
+	file_Output << "失敗數," << fail_Count << ",\n";
+	file_Output << "總次數," << total_Count << ",\n";
+	file_Output << "準確率," << success_Count / total_Count << ",\n";
+	file_Output << "總獲利," << total_Profit << ",\n";
+
+	cout << "準確率= " << success_Count / total_Count << "\n";
+	cout << "總獲利= " << total_Profit << "\n";
+	file_Output.close();//關閉檔案
 
 	for (int x = 0; x < fn; x++)
 	{
@@ -712,6 +724,9 @@ void AdaBoostTrain(float pf[][5000], float nf[][5000], int list[][2], float** q_
 
 		compute.reset_buffer(2, pw);
 		compute.reset_buffer(3, nw);
+
+		//Sleep(1000);
+
 		compute.run(cn2);
 
 		float error = 1;
@@ -746,10 +761,13 @@ void AdaBoostTrain(float pf[][5000], float nf[][5000], int list[][2], float** q_
 		//投票瞜
 		for (int g = 0; g < total_sn; g++)
 		{
+			//NF Sample實際的index
+			int nf_idx = g - KNN_ForTrainData;
+
 			if (g < KNN_ForTrainData)
 				bestTable[(int)pf[indX][g]][(int)pf[indY][g]] += pw[g];
 			else
-				bestTable[(int)nf[indX][g]][(int)nf[indY][g]] -= nw[g - KNN_ForTrainData];
+				bestTable[(int)nf[indX][nf_idx]][(int)nf[indY][nf_idx]] -= nw[nf_idx];
 		}
 
 		//正臉調權重
@@ -764,9 +782,12 @@ void AdaBoostTrain(float pf[][5000], float nf[][5000], int list[][2], float** q_
 		//負臉調權重
 		for (int i = KNN_ForTrainData; i < total_sn; i++)
 		{
-			if (bestTable[(int)nf[indX][i]][(int)nf[indY][i]] < 0)
+			//NF Sample實際的index
+			int nf_idx = i - KNN_ForTrainData;
+
+			if (bestTable[(int)nf[indX][nf_idx]][(int)nf[indY][nf_idx]] < 0)
 			{
-				nw[i - KNN_ForTrainData] = nw[i - KNN_ForTrainData] * beta;
+				nw[nf_idx] = nw[nf_idx] * beta;
 			}
 		}
 
@@ -795,29 +816,6 @@ void AdaBoostTrain(float pf[][5000], float nf[][5000], int list[][2], float** q_
 		//printf("i=%d\n", i);
 
 		model[i].alpha = log(1.0 / beta);
-
-		//cout << "beta: " << beta << "\n";
-		//cout << "alpha" << log(1.0 / beta) << "\n";
-
-		//if (i % 50 == 0)
-		//printf("[%d+%d] , %d, %f\n", list[selectif][0], list[selectif][1], selectif + 1, model[i].alpha);
-				
-		//for (int q = 0; q < 4; q++)
-		//{
-		//	cout << PorN(bestTable[q][0])
-		//		<< "|" << PorN(bestTable[q][1])
-		//		<< "|" << PorN(bestTable[q][2])
-		//		<< "|" << PorN(bestTable[q][3]) << "\n";
-		//}
-
-		//釋放記憶體
-		//for (int i = 0; i < total_sn; i++)
-		//	delete[] sn_XY[i];
-
-		//delete[] sn_XY;
-
-		//compute.reset_buffer(2, pw);
-		//compute.reset_buffer(3, nw);
 	}
 
 	delete[] pw;
@@ -916,36 +914,6 @@ void AdaBoostTest(float data_Fe[], float data_Re[], float** q_Map)
 	cout << "\n總獲利= " << total_Profit;
 	cout << "\n勝率= " << success_Count / total_Count;
 
-	//float *predit = new float[data_sn];
-	//int count = 0;
-	//for (int i = 0; i < data_sn; i++)
-	//{
-	//	for (int j = 0; j < data_fn; j++)
-	//	{
-	//		for (int k = 0; k < sizeof(F) / sizeof(F[0]); k++)
-	//		{
-	//			if (F[k][1] == 1)
-	//			{
-	//				if (data[i*(data_sn - 1) + j] >= F[k][2])
-	//				{
-	//					predit[i] = predit[i] + F[k][3];
-	//				}
-	//			}
-	//			else
-	//			{
-	//				if (data[i*(data_sn - 1) + j] < F[k][2])
-	//				{
-	//					predit[i] = predit[i] + F[k][3];
-	//				}
-	//			}
-	//		}
-	//	}
-	//	if (predit[i] > 0.5)
-	//	{
-	//		count++;
-	//	}
-	//}
-	//return count;
 }
 
 //根據原始資料 尋找相似的10,000筆資料出來建模 (正負資料各五千)

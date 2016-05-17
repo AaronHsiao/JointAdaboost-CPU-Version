@@ -5,7 +5,7 @@
 #include <fstream>
 
 #ifndef DEBUG
-#define DEBUG true
+#define DEBUG false
 #endif
 
 #ifndef COMPUTE_HPP  // include guard
@@ -109,6 +109,7 @@ public:
 			NULL,  // events
 			&event
 			);
+		event.wait();
 	}
 
 	void set_buffer(void *buffs,
@@ -215,6 +216,8 @@ public:
 				<< "[" << index << "]: "
 				<< size << std::endl;
 		}
+
+
 
 		error = this->command_queue.enqueueWriteBuffer(
 			*(this->buffers[index]),
